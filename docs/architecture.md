@@ -12,9 +12,23 @@ Almost everything described here is **PLANNED**. Sections are explicitly labeled
 User-facing interface for interacting with the agent: submitting repositories, asking questions, reviewing proposed changes, and approving or rejecting modifications. No framework has been chosen or initialized yet.
 
 ### Backend API
-**Status: PLANNED**
+**Status: PARTIALLY IMPLEMENTED**
 
-Exposes endpoints for repository ingestion, retrieval, chat, and (eventually) code modification workflows. No framework has been chosen or initialized yet.
+The `backend/` directory now hosts real Python code (the ingestion subsystem below), but there is no HTTP API yet — no framework has been chosen or initialized. The ingestion subsystem is used today as a plain Python library, invoked directly (e.g. from tests or the manual demo script), not through an API endpoint.
+
+### Repository Ingestion
+**Status: IMPLEMENTED (Phase 1, local paths only)**
+
+Located at `backend/ingestion/`. Given a local repository path, it recursively discovers files, applies a configurable ignore/filter policy, detects languages deterministically by extension, and produces a structured `IngestionResult` (repository-level stats plus per-file metadata plus ignored-file reasons plus non-fatal errors).
+
+Components:
+- `scanner.py` — recursive traversal via `os.walk`, pruning ignored directories and skipping symlinks; records inaccessible paths as non-fatal errors rather than raising.
+- `filters.py` — pure decision logic: generated-artifact glob patterns, known binary extensions, configurable max file size, and a content sniff (first ~1KB, null-byte heuristic) for extensions not otherwise recognized as text.
+- `language.py` — a static extension -> language map (Python, JavaScript, JSX, TypeScript, TSX, Java, C, C++, Go, HTML, CSS, SQL, JSON, YAML) and an extension/language -> category map (source / markup / config / documentation / other).
+- `models.py` — dependency-free dataclasses: `FileMetadata`, `RepositoryMetadata`, `IgnoredFile`, `LanguageStats`, `IngestionResult`.
+- `service.py` — `IngestionService`, the only component that knows the order of operations (scan -> filter -> detect -> collect -> result).
+
+Explicitly out of scope for Phase 1: GitHub cloning (Phase 11), reading file contents beyond the binary-detection sniff, and anything from parsing onward.
 
 ### AI / Agent Layer
 **Status: PLANNED**
@@ -99,5 +113,6 @@ Repository content is treated as untrusted data, never as instructions. No arbit
 - Project documentation (`README.md`, this file)
 - `.env.example` with placeholder configuration values
 - `.gitignore` covering environment files, dependency directories, and local artifacts
+- **Phase 1: Repository ingestion** (`backend/ingestion/`) — see the "Repository Ingestion" section above. Covered by an automated test suite in `tests/ingestion/` (49 tests) and a manual demonstration script at `backend/scripts/manual_ingestion_demo.py`.
 
-Nothing beyond project scaffolding has been implemented.
+Everything else in this document — parsing, embeddings, vector search, the knowledge graph, hybrid retrieval, the agent layer, tools, the database, the sandbox, GitHub integration, evaluation, and observability — remains PLANNED.

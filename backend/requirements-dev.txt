@@ -1,0 +1,7 @@
+# Development-only dependencies for the backend.
+#
+# pytest: used for the Phase 1 ingestion test suite. Chosen over the
+# standard library's unittest for tmp_path fixtures and parametrization,
+# which materially reduce boilerplate for filesystem-heavy tests and
+# will keep paying off as later phases add their own test suites.
+pytest>=8.0,<9.0

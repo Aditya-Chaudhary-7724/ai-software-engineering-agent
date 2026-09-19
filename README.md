@@ -93,7 +93,7 @@ No component in this diagram is implemented yet. This represents the target arch
 
 Planned phases, to be implemented one at a time with explicit approval between each:
 
-1. Repository ingestion
+1. Repository ingestion — **implemented (local paths only)**
 2. Code parsing
 3. Vector search
 4. Code RAG
@@ -122,4 +122,32 @@ Planned phases, to be implemented one at a time with explicit approval between e
 
 ## Status
 
-Project setup completed. Feature implementation begins with Phase 1 after explicit approval.
+Project setup completed. **Phase 1 (repository ingestion) is implemented.**
+
+### Phase 1 — Repository Ingestion (implemented)
+
+The `backend/ingestion` package can ingest a **local repository path** and produce a structured result describing what it found. Currently supported:
+
+- Recursive file discovery, with ignored directories (`.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `.next`, `dist`, `build`, `coverage`, `.cache`, `.pytest_cache`, `.mypy_cache`, `.idea`, `.vscode`) pruned during traversal rather than filtered afterward.
+- Symlinks are never followed and never reported as discovered files.
+- A configurable filter policy that excludes generated-artifact patterns (e.g. `*.pyc`, `*.min.js`), known binary extensions (images, archives, fonts, media, databases), oversized files (default 1 MB limit, configurable), and files whose content sniffs as binary — without blindly excluding every unrecognized extension.
+- Deterministic, extension-based language detection for Python, JavaScript, JSX, TypeScript, TSX, Java, C, C++, Go, HTML, CSS, SQL, JSON, and YAML.
+- Structured, dependency-free metadata models (`FileMetadata`, `RepositoryMetadata`, `IgnoredFile`, `IngestionResult`) that later phases can extend.
+- Non-fatal, safe error handling for inaccessible files/directories — a single unreadable subdirectory does not abort the run.
+
+Not yet supported (explicitly out of scope for Phase 1):
+
+- GitHub repository cloning/ingestion (planned for Phase 11) — only local paths are accepted today.
+- Reading or parsing file *contents* beyond the minimal binary-detection sniff.
+- Any embeddings, vector storage, graph storage, retrieval, LLM calls, or code modification.
+
+**Running it:**
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements-dev.txt
+.venv/bin/python -m pytest                              # run the test suite
+.venv/bin/python backend/scripts/manual_ingestion_demo.py  # manual demonstration
+```
+
+See `docs/architecture.md` for the full Phase 1 design and `docs/architecture.md`'s IMPLEMENTED/PLANNED breakdown for what remains.
