@@ -1,0 +1,45 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Testing / cache
+.pytest_cache/
+.mypy_cache/
+
+# Local databases
+*.db
+*.sqlite
+
+# Local data
+data/
+
+# Secrets
+*.pem
+*.key
+
+# Temporary files
+tmp/
+temp/
