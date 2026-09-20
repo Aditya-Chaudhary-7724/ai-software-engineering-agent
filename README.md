@@ -103,7 +103,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 8. Repository tools — **implemented** (7 of 9 fully functional; get_callers/get_callees honestly report unavailability rather than guessing)
 9. Code modification — **implemented** (real diff/apply/stale-check mechanism; content quality requires an LLM API key)
 10. Sandbox + testing loop — **implemented** (real Docker sandbox; bounded, human-approved fix loop after an applied change)
-11. GitHub integration
+11. GitHub integration — **implemented** (real clone/metadata/pipeline integration; push and PR creation gated behind explicit authorization/approval, never exercised against a repository this project doesn't own)
 12. Evaluation
 13. Observability
 14. Security
@@ -122,7 +122,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 
 ## Status
 
-Project setup completed. **Phases 1-10 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, and the Docker sandbox + testing loop) are implemented.**
+Project setup completed. **Phases 1-11 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, and GitHub integration) are implemented.**
 
 ### Phase 1 — Repository Ingestion (implemented)
 
@@ -426,4 +426,39 @@ set -a; source .env; set +a
 .venv/bin/python -m pytest tests/agent                        # includes the Phase 10 fix-loop tests
 .venv/bin/python backend/scripts/manual_sandbox_demo.py        # standalone: passing/failing/hanging tests, network + filesystem isolation
 .venv/bin/python backend/scripts/manual_agent_demo.py          # scenario 4: the full fix loop against a real container
+```
+
+### Phase 11 — GitHub Integration (implemented)
+
+The `backend/github_integration` package adds real GitHub repository access — validation, metadata, cloning, and gated write operations — behind one service, and wires cloning into the EXISTING Phase 1/2/3/5 pipeline unchanged.
+
+```
+URL -> parse_github_url (validate: https://github.com/<owner>/<repo> only)
+    -> GitHubAPIClient.get_repository (real metadata)
+    -> resolve_clone_destination (workspace-root-confined, reuses Phase 8's resolve_safe_path)
+    -> GitOperations.clone (real `git clone` via subprocess)
+    -> [caller runs the existing Phase 1/2/3/5 pipeline, unchanged — github_integration/pipeline.py]
+    -> GitOperations.create_branch -> GitOperations.commit_all
+    -> push_branch(authorized=True only) -> create_pull_request(approved=True only)
+```
+
+**URL validation rejects everything but `https://github.com/<owner>/<repo>`** — SSH URLs, other hosts, lookalike hosts (`github.com.evil.com`), userinfo-smuggled netlocs, and path-traversal attempts (`https://github.com/octocat/../../../etc`) are all rejected before the owner/repo segments are ever used to build a filesystem path or an API call. `resolve_clone_destination` then independently reuses Phase 8's `tools.security.resolve_safe_path` **unchanged** to confine every clone to `workspace_root/<owner>/<repo>` — tested directly with an already-malicious reference that bypasses URL validation entirely, proving this is real defense-in-depth, not one layer relying on the other.
+
+**Authentication is `GITHUB_TOKEN` only**, read from the environment (or passed explicitly for tests) — never hardcoded, never required for read-only operations against public repositories. **The token never appears in a subprocess argv list** (visible to any process on the host via `ps`) — `git_operations.py` passes it only through the child process's `GIT_TOKEN` environment variable, read at credential time by a standard git inline-shell credential helper. Verified directly: a unit test asserts the literal token string never appears in any constructed `git` command.
+
+**The token never reaches repository code or the Docker sandbox** — not just designed that way, verified: `tests/github_integration/test_token_isolation.py` sets `GITHUB_TOKEN` in the host environment and proves the Phase 10 sandbox's constructed `docker run` command contains neither the token nor any `-e`/`--env-file` flag at all.
+
+**Push and pull-request creation are gated exactly like Phase 9's `apply_change`:** `push_branch` requires `authorized=True`, `create_pull_request` requires `approved=True` — both raise `UnauthorizedActionError` otherwise, and neither flag is ever defaulted or inferred. Commit authorship (`author_name`/`author_email`) is always required from the caller, never invented or hardcoded — this project must never assume an identity to attribute a commit to.
+
+**Why `requests` + the `git` CLI, not a GitHub SDK (PyGithub/githubkit):** this package only ever needs two REST calls (read a repo, open a PR) — a full SDK would hide exactly those two calls behind a much larger dependency. `requests` was already a transitive dependency in this environment and is the de facto standard synchronous HTTP client. Local git operations shell out to the `git` CLI via `subprocess` instead, the same "official CLI over an added SDK" pattern as Phase 10's Docker sandbox — zero new dependencies for that half of the package.
+
+**What's genuinely tested locally vs. what needs a real, owned repository:** all 54 tests in `tests/github_integration/` pass in this environment, including real network calls to `api.github.com` and a real `git clone` of `octocat/Hello-World` (GitHub's own canonical example repo), plus a real-pipeline test indexing that real clone through Phase 3 against local PostgreSQL. Push and pull-request creation are mechanism-tested with mocks and demonstrated being correctly **refused** without authorization in the manual demo — an actual push or PR is never exercised against a repository this project doesn't own or control. Real push/PR execution needs a real `GITHUB_TOKEN` and a repository the caller actually owns.
+
+**Explicitly out of scope:** GitHub Enterprise/self-hosted hosts, SSH authentication, non-GitHub hosts, and wiring this into `agent/graph.py`'s LangGraph workflow (this phase builds the capability itself, as requested; agent-workflow integration is a natural next step, not implemented here, per this project's phase-control discipline).
+
+**Running it:**
+```bash
+.venv/bin/python -m pytest tests/github_integration          # real-network/Postgres tests skip cleanly if unreachable
+set -a; source .env; set +a
+.venv/bin/python backend/scripts/manual_github_demo.py        # real clone + real pipeline + proof push/PR are refused
 ```

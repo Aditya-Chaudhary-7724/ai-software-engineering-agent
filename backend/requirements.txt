@@ -54,3 +54,16 @@ langgraph==0.6.11
 #   the first place in this project with a genuine external-input-validation
 #   need; dataclasses (used everywhere else) don't validate at runtime.
 pydantic==2.13.5
+
+# Phase 11: GitHub integration.
+# requests: the GitHub REST API (api.github.com) is plain HTTP + JSON —
+#   this package only ever needs two calls (read repository metadata, open
+#   a pull request), so a full SDK (PyGithub, githubkit) would hide exactly
+#   the two calls actually used behind a much larger dependency surface.
+#   `requests` was already a transitive dependency in this project's
+#   environment and is the de facto standard synchronous Python HTTP
+#   client, giving well-tested timeout/error handling over hand-rolling
+#   one on `urllib`. Local git operations (clone/branch/commit/push) shell
+#   out to the `git` CLI via `subprocess` instead — no dependency needed,
+#   same pattern as Phase 10's Docker sandbox.
+requests==2.32.5
