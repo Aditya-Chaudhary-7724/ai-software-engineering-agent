@@ -104,7 +104,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 9. Code modification — **implemented** (real diff/apply/stale-check mechanism; content quality requires an LLM API key)
 10. Sandbox + testing loop — **implemented** (real Docker sandbox; bounded, human-approved fix loop after an applied change)
 11. GitHub integration — **implemented** (real clone/metadata/pipeline integration; push and PR creation gated behind explicit authorization/approval, never exercised against a repository this project doesn't own)
-12. Evaluation
+12. Evaluation — **implemented** (real, reproducible metrics against real services; no invented numbers — see the Phase 12 section below)
 13. Observability
 14. Security
 15. Production deployment
@@ -122,7 +122,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 
 ## Status
 
-Project setup completed. **Phases 1-11 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, and GitHub integration) are implemented.**
+Project setup completed. **Phases 1-12 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, GitHub integration, and the evaluation framework) are implemented.**
 
 ### Phase 1 — Repository Ingestion (implemented)
 
@@ -461,4 +461,44 @@ URL -> parse_github_url (validate: https://github.com/<owner>/<repo> only)
 .venv/bin/python -m pytest tests/github_integration          # real-network/Postgres tests skip cleanly if unreachable
 set -a; source .env; set +a
 .venv/bin/python backend/scripts/manual_github_demo.py        # real clone + real pipeline + proof push/PR are refused
+```
+
+### Phase 12 — Evaluation (implemented)
+
+The `backend/evaluation` package is a real, quantitative evaluation framework covering retrieval, RAG, agent behavior, code modification, and the testing loop — run through the ACTUAL Phase 1-10 code (never simulated) against a small, fixed, fully-inspectable benchmark. Every number this section reports comes from an actual run of `backend/scripts/run_evaluation.py`, not a hand-typed figure.
+
+**The dataset** (`evaluation/dataset.py`) is deliberately small — one 4-file sample repository (~15 lines total) plus a handful of explicit cases per category — so it stays "transparent enough that an interviewer can inspect it in full," per this phase's own instruction. Every case's expected result is derived by reading the sample repository's actual content, not by running the system and recording whatever it happened to return.
+
+**Metrics implemented** (`evaluation/metrics.py`, pure functions, unit-tested with plain lists): Recall@K, Precision@K, reciprocal rank (aggregated into MRR per method in the report), and hit rate.
+
+**An honest, load-bearing caveat about the numbers:** retrieval runs by default with `DeterministicLocalEmbeddingProvider` — the same hash-based, non-semantic stand-in used throughout this project's test suite (no `EMBEDDING_API_KEY` assumed present). So **vector-only** recall/precision/hit-rate numbers measure nothing about real embedding quality and are reported as informational (never gating pass/fail) — this is expected, not a bug. On this intentionally tiny benchmark, vector-only recall@5 is often saturated at 1.0 purely because k=5 covers nearly the whole corpus, but vector-only precision@5 (consistently lower than keyword's in an actual run) still reveals the real ranking-quality gap. **Keyword search** (PostgreSQL full-text, no embeddings) and the **hybrid methods that include it** are what this suite actually gates pass/fail on. A real vector-retrieval number needs `OpenAIEmbeddingProvider` + a real `EMBEDDING_API_KEY` (the runner accepts an injected provider — a one-line swap for a caller who has one).
+
+**What's evaluated per category:**
+| Category | What's checked | Requires |
+|---|---|---|
+| Retrieval | Recall/Precision/MRR/hit-rate for vector, keyword, RAG-hybrid, graph-hybrid | PostgreSQL (+ Neo4j for graph-hybrid) |
+| RAG | Expected evidence retrieved, context contains expected substrings, citations grounded in what was shown | PostgreSQL |
+| Agent | Task classification, routing correctness, no unnecessary capability invoked, bounded retries, safe refusal pending approval | PostgreSQL + Neo4j |
+| Modification | Approval required, correct/only-file scope, stale-change refusal, tests run after apply, failed changes reported honestly | PostgreSQL + Neo4j (+ Docker for one case) |
+| Testing loop | First-pass success, fail→fix→approve→recover, iteration limit, wall-clock timeout, approval never bypassed | PostgreSQL + Neo4j |
+
+**"Tool selection" is scoped to what this project actually has**, not a capability that doesn't exist: there's no autonomous LLM-driven tool-calling loop in this codebase (the agent graph routes deterministically via `classify_task`, not an LLM choosing a tool). Agent evaluation instead checks that deterministic routing invokes only the capabilities appropriate to a task type, via the same `execution_log` entries the agent already produces.
+
+**RAG evaluation is fully deterministic**, computed before any LLM runs — `answer_is_non_empty` is the only thing checked about the generated text itself. An optional `--llm-judge` flag adds a real Anthropic-scored metric (`llm_judge_score`), isolated behind its own `LLMJudge` interface, **requires a real `LLM_API_KEY`**, never runs by default, and never gates pass/fail — always reported as an LLM's own judgment, not a deterministic measurement.
+
+**Modification and testing-loop evaluation reuse Phase 9/10's real mechanisms** (`ModificationService`, `AgentService`, the real graph nodes) rather than simulating them — one modification case runs a real Docker container end-to-end (skipped honestly if Docker isn't reachable); the testing-loop cases use a scripted, non-Docker `TestRunner` stand-in (`evaluation/scripted_test_runner.py` — deliberately NOT in `backend/sandbox/`, which ships no fake implementation at all) to isolate the loop's bounded-iteration/timeout/approval-per-retry guarantees from sandbox variability.
+
+**No new database:** reports export to JSON on disk, which is sufficient for "diff one run against a later one" — no query/index/concurrent-write need that would justify adding infrastructure for a handful of small reports.
+
+**Exact results from a real run in this environment:** all **17/17 cases pass**, 0 skipped (PostgreSQL, Neo4j, and Docker are all reachable here). `--llm-judge` was not exercised live (no `LLM_API_KEY` present) — its response-parsing logic is unit-tested with a fake provider instead.
+
+**What's genuinely tested locally:** 58 tests in `tests/evaluation/` — pure unit tests for metric math, dataset structure, and report rendering, plus integration tests for every runner against real services, including tests that prove each runner correctly reports `passed=False` for a deliberately-wrong expectation (not only ever reports success).
+
+**Running it:**
+```bash
+set -a; source .env; set +a
+.venv/bin/python -m pytest tests/evaluation                        # 58 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
+.venv/bin/python backend/scripts/run_evaluation.py                  # prints the full report; exit code reflects pass/fail
+.venv/bin/python backend/scripts/run_evaluation.py --json out.json  # also export raw results as JSON
+.venv/bin/python backend/scripts/run_evaluation.py --llm-judge       # adds a real-LLM RAG metric (requires LLM_API_KEY)
 ```
