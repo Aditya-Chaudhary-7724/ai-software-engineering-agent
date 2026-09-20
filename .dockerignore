@@ -1,0 +1,40 @@
+# Phase 15: keeps secrets and irrelevant files out of the Docker BUILD
+# CONTEXT entirely (not just out of the final image) — defense in
+# depth alongside backend/Dockerfile's own COPY instructions, which
+# never reference any of these paths anyway.
+
+# Secrets — never sent to the Docker daemon, let alone baked into an image
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node (frontend/ is currently empty — see docs/deployment.md)
+node_modules/
+.next/
+
+# Local observability trace files — runtime output, never part of a build
+.observability/
+
+# Local data
+data/
+
+# Docs and tests are not needed inside the production image
+docs/
+tests/
+*.md
+
+# Local databases used only by local scripts/tests
+*.db
+*.sqlite

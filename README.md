@@ -581,3 +581,25 @@ set -a; source .env; set +a
 .venv/bin/python -m mypy backend
 git diff --check
 ```
+
+### Phase 15 — Production Deployment (implemented)
+
+A minimal, real production deployment layer — not a full deployment, and not claimed as one. Full detail (architecture, what's implemented vs. only a documented target, secrets, health checks, sandbox/app-container isolation, CI, dependency scan results) lives in **[docs/deployment.md](docs/deployment.md)**.
+
+**What this phase adds:** `backend/api/` — a deliberately minimal FastAPI app exposing only `/`, `/health/live`, and `/health/ready` (liveness never depends on external services; readiness is gated by PostgreSQL only — a Neo4j outage is reported but never fails readiness, since Neo4j is optional). `backend/config.py` is the single source of truth for required vs. optional environment variables, and never returns or logs a value. `backend/Dockerfile` builds the API as a **separate image from the Phase 10 sandbox** — non-root user, no Docker/git CLI, no baked-in secrets — built and run locally against real Postgres this session. `.github/workflows/ci.yml` runs the full suite, the security suite, mypy, and both Docker builds on every push/PR — CI only, no auto-deploy job, since no real deployment target exists.
+
+**Explicitly not done, and not claimed:** no cloud deployment, no frontend (`frontend/` is empty), no HTTP surface for agent operations yet (only health checks), no dependency upgrades this phase (`pip-audit` found 26 known vulnerabilities, almost all transitive; documented rather than papered over).
+
+**Architecture boundary this phase is built around:** the application container that holds real secrets (`DATABASE_URL`, API keys, `GITHUB_TOKEN`) and the Phase 10 sandbox container that executes untrusted repository code are, and remain, two separate images with no shared runtime, no shared credentials, and no Docker-socket access from the app container into the sandbox.
+
+**Running it:**
+```bash
+set -a; source .env; set +a
+.venv/bin/python backend/scripts/check_production_config.py     # validates required env vars; never prints values
+.venv/bin/python backend/scripts/apply_schema.py                 # explicit, idempotent, non-destructive schema migration
+.venv/bin/uvicorn api.main:app --app-dir backend --reload         # local dev run of the API
+docker build -t ai-swe-agent-backend -f backend/Dockerfile .
+docker run --rm -p 8000:8000 -e DATABASE_URL=... -e APP_ENV=production ai-swe-agent-backend
+curl localhost:8000/health/live
+curl localhost:8000/health/ready
+```

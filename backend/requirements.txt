@@ -83,3 +83,20 @@ requests==2.32.5
 #   Pinned explicitly here now that this project's own code imports it
 #   directly, rather than relying on it staying available transitively.
 langsmith==0.4.37
+
+# Phase 15: production API / deployment.
+# fastapi: the ASGI application (backend/api/) exposing liveness/readiness
+#   checks and the production entry point. Built on Pydantic — already a
+#   dependency since Phase 8 (tool schemas) — so this doesn't introduce a
+#   new validation paradigm, just a thin HTTP layer over one already in use.
+# uvicorn[standard]: the ASGI server FastAPI itself is built to run under;
+#   the "standard" extra pulls in uvloop/httptools for real production
+#   performance rather than the pure-Python fallback.
+# gunicorn: the process manager used in production (backend/Dockerfile) —
+#   pairs with Uvicorn's own worker class (`uvicorn.workers.UvicornWorker`)
+#   for the standard, documented FastAPI production deployment pattern:
+#   graceful SIGTERM shutdown and automatic worker respawn that Uvicorn
+#   alone (run standalone, without a process manager) does not provide.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+gunicorn==23.0.0
