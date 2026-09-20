@@ -30,62 +30,228 @@ Components:
 
 Explicitly out of scope for Phase 1: GitHub cloning (Phase 11), reading file contents beyond the binary-detection sniff, and anything from parsing onward.
 
+### Code Parsing
+**Status: IMPLEMENTED (Phase 2)**
+
+Located at `backend/parsing/`. Consumes a Phase 1 `IngestionResult` and extracts functions, classes, imports, and line ranges from every source file it has a parser for.
+
+Components:
+- `python_parser.py` — stdlib `ast`-based extraction for Python.
+- `languages.py` — Tree-sitter grammar loading (cached) plus one extraction function per language family (JS/JSX/TS/TSX share one, since TS's grammar is a superset for the constructs extracted; Java; Go; C/C++).
+- `ts_utils.py` — shared, dependency-free Tree-sitter traversal helpers (node text, line ranges, descendant search) used by every language extractor.
+- `treesitter_parser.py` — the single entry point that loads the right grammar, parses, dispatches to the right extractor, and turns any failure into a recorded `parse_error` rather than an exception.
+- `models.py` — `ImportEntity`, `ClassEntity`, `FunctionEntity`, `ParsedFile`, `ParsingResult`.
+- `service.py` — `ParsingService`, orchestrating "for each Phase 1 file classified as source: read it, parse it, collect the result."
+
+**Why Tree-sitter over per-language AST libraries for non-Python languages:** the alternative would be a separate, differently-shaped parser dependency per language (e.g. Esprima/Babel for JS, javalang for Java, go/ast bindings for Go) with inconsistent APIs, or hand-rolled regex extraction (fragile against real syntax). Tree-sitter gives one consistent node/field API across all of them, which is exactly what the shared JS/TS extractor and the `ts_utils.py` helpers rely on. Python is the one language kept off Tree-sitter because the standard library `ast` module is already exact, dependency-free, and gives line ranges directly — reaching for Tree-sitter there would be an unjustified dependency.
+
+Explicitly out of scope for Phase 2: SQL entity extraction (functions/classes don't map cleanly onto SQL — recorded as skipped, not faked), full cross-file symbol resolution (e.g. resolving an import to the class it points at — that is Phase 5's job), and decomposing parameters into typed (name, type) pairs.
+
+### Vector Search Foundation
+**Status: IMPLEMENTED (Phase 3, local embedding provider LOCAL TESTED; OpenAI provider REQUIRES CREDENTIALS)**
+
+Located at `backend/vectorstore/`. Chunks Phase 2's parsed output, embeds each chunk via a pluggable provider, and stores/searches the result in PostgreSQL + pgvector.
+
+Components:
+- `chunking.py` — one `CodeChunk` per class/function (sliced from source using Phase 2's line ranges), with a whole-file fallback for source files that produced no symbols (currently only SQL).
+- `embeddings/base.py` — the `EmbeddingProvider` interface (`embed(texts) -> vectors`).
+- `embeddings/openai_provider.py` — production provider, OpenAI `text-embedding-3-small` (1536 dims). Requires `EMBEDDING_API_KEY`; raises `MissingCredentialsError` with a clear message if unset. Not exercised against a live API in this environment (no key present) — its request/response handling is unit-tested against a mocked client.
+- `embeddings/local_provider.py` — `DeterministicLocalEmbeddingProvider`, a hash-based, **non-semantic** stand-in for local dev/tests. Same interface and dimension as the OpenAI provider, so it can exercise the exact same storage/search code path without credentials or network access. Explicitly documented as not usable for demonstrating real retrieval quality.
+- `schema.sql` / `migrations.py` — two tables (`repositories`, `code_chunks`), applied idempotently. No migration framework (e.g. Alembic) yet — the schema is still evolving and `CREATE ... IF NOT EXISTS` is sufficient and honest about that.
+- `store.py` — `VectorStore`: raw parameterized SQL via `psycopg` (no ORM — unjustified for two tables), cosine-distance similarity search using pgvector's `<=>` operator over an HNSW index, with metadata filtering by repository/language/chunk type.
+- `service.py` — `IndexingService`, wiring ingestion (Phase 1) → parsing (Phase 2) → chunking → embedding → storage into one call.
+
+**Local environment used for this build:** PostgreSQL 18 (Homebrew) with pgvector 0.8.6, in two databases — `ai_swe_agent` (dev) and `ai_swe_agent_test` (automated tests, truncated between test runs). Both are dedicated to this project and separate from this machine's other local databases. The automated test suite (`tests/vectorstore/`, 18 tests) skips cleanly rather than failing if no Postgres is reachable, since that shouldn't be assumed on every machine this project runs on.
+
+**Why PostgreSQL + pgvector over a dedicated vector database:** the project's own technology policy rules out adding infrastructure (Pinecone/Weaviate/Elasticsearch/Redis) without a specific engineering reason, and none exists yet — a single Postgres instance already serves both structured application data and vector search at this project's scale, with no operational cost of running a second system.
+
+Explicitly out of scope for Phase 3: real semantic retrieval quality (requires a real API key, which this environment does not have), embedding documentation/config files (only "source"-category files are chunked), and a migration framework (deferred until the schema stabilizes).
+
 ### AI / Agent Layer
 **Status: PLANNED**
 
 Coordinates retrieval, reasoning, and tool use. Will be implemented as a stateful workflow (see Agent Layer below), not a single autonomous loop.
 
 ### Retrieval Layer (Code RAG)
-**Status: PLANNED**
+**Status: IMPLEMENTED (Phase 4; retrieval/ranking LOCAL TESTED, LLM answer generation REQUIRES CREDENTIALS)**
 
-Chunking of source code, embedding generation, and vector storage/retrieval using PostgreSQL + pgvector. Enables semantic search over the codebase.
+Located at `backend/rag/`. Pipeline: question → query embedding → vector retrieval (Phase 3) + keyword retrieval → merge/rank → bounded context assembly → LLM → grounded answer with source citations.
+
+Components:
+- `keyword_search.py` — PostgreSQL full-text search over `code_chunks.content`, using an OR of the question's word tokens (`to_tsquery`) rather than `plainto_tsquery`'s implicit AND, since requiring every word in a natural-language question to match is too strict for this use case. Backed by a GIN index (`schema.sql`).
+- `ranking.py` — merges vector hits (Phase 3) and keyword hits into one list, scored `0.7 * vector_similarity + 0.3 * keyword_score` (documented as a deliberately simple starting point; Phase 6 is expected to add graph evidence to this).
+- `context.py` — assembles a size-bounded context string (default 8000 chars) from the top-ranked candidates, returning exactly which candidates were included so citations never reference something the LLM wasn't shown.
+- `prompt.py` — builds the grounded-answer prompt; documents honestly that nothing here *verifies* the model complied with "answer only from context" — that's a Phase 12 evaluation concern.
+- `llm/base.py`, `llm/anthropic_provider.py`, `llm/stub_provider.py` — the same abstraction pattern as Phase 3's embedding providers: a real provider requiring `LLM_API_KEY` (unit-tested via a mocked client, not exercised live in this environment) and an explicitly-non-LLM deterministic stub used to test the full pipeline without credentials.
+- `service.py` — `RAGService`, wiring retrieval → ranking → context → LLM into one `answer(question, ...)` call, with metadata filtering by repository/language/chunk type passed through to both retrieval methods.
+
+**What's genuinely tested locally vs. what needs external credentials:** retrieval, ranking, context assembly, and the full pipeline (with the stub LLM) run against real PostgreSQL in `tests/rag/` (21 tests). Only `AnthropicLLMProvider` actually calling a live model is untested in this environment, for the same reason as Phase 3's OpenAI provider: no key is present.
+
+Explicitly out of scope for Phase 4: retrieval by exact commit/version (Phase 1/2 don't track git history yet), and any verification that the LLM's free-text answer is actually faithful to the retrieved context (source citations are accurate regardless, since they're built from retrieval metadata, not the model's claims).
 
 ### Knowledge Graph
-**Status: PLANNED**
+**Status: IMPLEMENTED (Phase 5, LOCAL TESTED against a real Neo4j instance)**
 
-A Neo4j-backed graph representing structural relationships in code: functions, classes, modules, imports, callers, and callees. Enables reasoning about dependencies that plain vector search cannot capture.
+Located at `backend/graph/`. Builds a Neo4j graph from Phase 1 + Phase 2 output: `Repository`, `Folder`, `File`, `Class`, `Function`, `Module` nodes; `CONTAINS`, `DEFINES`, `IMPORTS`, `RESOLVES_TO`, `INHERITS` relationships — every one derived from data Phase 1/2 actually extracted, never inferred by name-matching alone where that would be unreliable.
+
+Components:
+- `client.py` — thin wrapper over the official `neo4j` driver; no query-builder/ORM layer, since Cypher is already the right level of abstraction for graph traversal.
+- `schema.py` — idempotent composite-uniqueness constraints (verified to work on Neo4j 5 **Community** Edition, not just Enterprise), keyed by `(repository_root_path, ...)` so re-indexing a repository never duplicates nodes and different repositories never collide.
+- `resolution.py` — best-effort import-string → file resolution (Python, JS/TS/JSX/TSX relative imports, Java dotted imports) and base-class-name → class resolution (only when unambiguous). Explicitly documents what is *not* attempted (Go, C/C++ import resolution) and why, rather than faking it.
+- `builder.py` — `GraphBuilder`, using `UNWIND`-batched Cypher writes per node/relationship type rather than one round-trip per item.
+- `queries.py` — read-only Cypher queries answering exactly the kind of question vector search can't: `get_file_dependencies`, `get_importers_of_file`, `get_class_ancestors` (transitive), `find_symbol`, `get_repository_summary`.
+
+**Explicitly NOT created: `CALLS`, `USES`, `DEPENDS_ON` relationships.** Phase 2 extracts definitions (functions, classes, imports), not call-sites inside function bodies, so there is no real data to build these from. Per this project's own instruction not to hallucinate `CALLS` relationships, they are left out entirely rather than approximated from name-matching — they become possible once a future phase adds call-site extraction.
+
+**Why Neo4j over encoding relationships in PostgreSQL:** the questions this graph answers (transitive inheritance chains, dependency traversal, reverse lookups) are exactly what a graph database is built for — recursive traversal in Cypher is a few lines; the same query in SQL needs recursive CTEs per relationship type and gets unwieldy fast as more relationship types are added (Phase 6+ will add more). This is the one piece of the technology policy's "graph: Neo4j" guidance that has a genuine, demonstrated engineering reason behind it, not just because the technology list called for it.
+
+Explicitly out of scope for Phase 5: `CALLS`/`USES`/`DEPENDS_ON` (see above), Go and C/C++ import resolution (documented in `resolution.py`), and resolving Python relative imports (`from . import x` — Phase 2's Python parser doesn't capture the AST's relative-import `level`, so these are treated as absolute and typically fail to resolve, which just means no edge, not a wrong one).
 
 ### Hybrid Retrieval
-**Status: PLANNED**
+**Status: IMPLEMENTED (Phase 6, LOCAL TESTED against real PostgreSQL + Neo4j together)**
 
-Combines vector-based semantic retrieval with graph-based structural retrieval to answer questions that require both meaning and structure.
+Located at `backend/hybrid/`. Extends Phase 4's vector+keyword retrieval with a third evidence source: one-hop expansion through the Phase 5 graph from the top seed candidates (class methods, inheritance neighbors, and symbols defined in files the seed depends on).
+
+Components:
+- `graph_expansion.py` — `find_related_symbols` (pure Neo4j traversal, one hop, from a seed's chunk_type/qualified_name) and `fetch_chunks_by_symbol` (resolves graph-found symbols back to real `code_chunks` rows in Postgres via a dynamic OR of exact `(relative_path, qualified_name)` pairs — chosen over two independent `ANY(...)` array conditions, which would incorrectly match cross-combinations between different pairs).
+- `ranking.py` — merges vector, keyword, and graph evidence: `0.5 * vector_similarity + 0.2 * keyword_score + 0.3 * graph_score`, with every chunk's `found_via` tuple recording exactly which method(s) surfaced it — this is what "do not simply concatenate arbitrary results" means in practice: every inclusion is traceable to a reason.
+- `service.py` — `HybridRAGService`, reusing Phase 4's `build_context`/`build_prompt`/LLM-provider machinery unchanged (only the retrieval and ranking stages are new).
+
+**Worked example, actually built and tested, not just described:** `login_route` (in `routes.py`) matches by vector/keyword. `routes.py` imports `auth_service.py` (resolved via Phase 5's `RESOLVES_TO`), and `auth_service.py` defines both `login_user` and `generate_jwt`. Graph expansion follows that one hop and pulls in `generate_jwt` — a function `login_route` never calls directly (it calls `login_user`, which calls `generate_jwt`) and the question never mentions — tagged `found_via=("graph:dependency_symbol",)` (or combined with vector/keyword if those also matched). Verified in `tests/hybrid/test_graph_expansion.py` with controlled seeds (not dependent on the non-semantic local embedding provider's ranking) and end-to-end in `tests/hybrid/test_service.py`.
+
+**A real architectural seam, documented rather than hidden:** Phase 3 (Postgres) keys a repository by an integer `repository_id`; Phase 5 (Neo4j) keys it by `root_path`. The two subsystems were built independently and don't share one identifier. `HybridRAGService.answer()` requires the caller to supply both rather than papering over this with an implicit lookup. Unifying them (e.g. storing `repository_id` as a property on the Neo4j `Repository` node) is a reasonable future refinement — not done here, since it would mean reopening already-tested Phase 3/5 code purely for convenience, not correctness.
+
+Explicitly out of scope for Phase 6: tuning the 0.5/0.2/0.3 weights against a real evaluation dataset (Phase 12), and expanding more than one hop out from a seed (bounded by design, not a limitation to fix — unbounded traversal on a large repository would risk pulling in the entire dependency graph as "context").
 
 ### Agent Layer
-**Status: PLANNED**
+**Status: IMPLEMENTED (Phase 7, updated in Phase 9; LOCAL TESTED against real PostgreSQL + Neo4j)**
 
-A stateful LangGraph workflow with explicit state and conditional routing:
+Located at `backend/agent/`. A stateful **LangGraph** workflow — not one giant autonomous agent — implementing this topology (the `modify` branch was reordered in Phase 9; see below):
 
 ```
-Task Analyzer
-  -> Planner
-  -> Repository Search
-  -> Graph Search
-  -> Code Analyzer
-  -> Decision
-  -> Answer / Modify / Test / Human Approval
-  -> Final Response
+Task Analyzer -> Planner -> Repository Search -> Graph Search -> Code Analyzer
+                                                        ^              |
+                                                        |   (retry, bounded by MAX_RETRIES)
+                                                        +--------------+
+                                                                       v
+                                                                   Decision
+                                    Answer <---+----> Test          Propose Change
+                                                                          |
+                                                              Human Approval (interrupt,
+                                                              shown the actual diff)
+                                                                          |
+                                                                    Apply Change
+                                                          (writes only if approved; the one
+                                                           function in this project that does)
 ```
 
-Design constraints for this layer:
-- Explicit state, not implicit conversation history
-- Conditional routing based on task type
-- Bounded retries to prevent infinite loops
-- Human approval required before consequential actions
+Components:
+- `state.py` — `AgentState`, a plain `TypedDict` (not dataclasses) so LangGraph's checkpointer can persist it verbatim across the human-approval pause; `execution_log` uses an `operator.add` reducer so each node's summary appends rather than overwrites.
+- `classification.py` — deterministic, rule-based task classification (`answer` / `modify` / `test`). Deliberately not an LLM call: keeps routing fully testable without `LLM_API_KEY` and keeps the decision inspectable.
+- `nodes.py` — one function (or factory, for nodes needing a service) per graph node. Reuses Phase 3-6's building blocks directly (`vector_store.similarity_search`, `keyword_search`, `merge_and_rank` from both `rag` and `hybrid`, `build_graph_candidates`, `build_context`, `build_prompt`) rather than re-implementing retrieval logic.
+- `graph.py` — builds and compiles the `StateGraph`: conditional edges for the bounded retry loop and the four-way decision routing.
+- `service.py` — `AgentService.run()` / `.resume()`, hiding LangGraph's `Command(resume=...)` mechanics behind a plain two-method API keyed by a caller-provided `thread_id`.
+
+**Explicit state, not implicit conversation history** — `AgentState` carries every intermediate result (search hits, graph candidates, ranked candidates, decision, approval) as plain data, not as an opaque running transcript.
+
+**Conditional routing based on task type** — `decision_node` reads `task_type` and routes to `answer`, `test`, or `human_approval` (which gates `modify` — the one consequential action among the three, per this project's own human-approval-for-consequential-actions rule).
+
+**Bounded retries, provably terminating** — `code_analyzer` only sets `should_retry=True` when `retry_count < MAX_RETRIES` (2), and `should_retry` is recomputed fresh on every pass (never based on stale state), so the retry loop cannot run more than `MAX_RETRIES` times regardless of repository content. Tested directly: an empty-repository run produces exactly 2 "retrying" log entries, then an honest "no context found" answer.
+
+**Real human approval, not simulated** — `human_approval_node` calls LangGraph's `interrupt()` with the actual proposed diff (generated by Phase 9's `propose_change` node just before), which actually pauses the graph and returns control to the caller; work only continues after an explicit `resume(thread_id, approved=...)` call. Both paths are tested end-to-end: rejection leaves the file untouched, approval applies the change via `apply_change_node` (Phase 9).
+
+**No hidden chain-of-thought** — every node appends one short, safe summary to `execution_log` (e.g. `"Analyzing dependencies... found 2 related symbol(s)."`), matching this project's own observability principle. Nothing resembling raw model reasoning is exposed.
+
+**Update (Phase 9):** the `modify` path described above was a stub when Phase 7 was built; Phase 9 wired in the real mechanism. See the "Code Modification" section below for what changed and why the approval ordering was corrected in the process.
+
+**Update (Phase 10):** the `test` branch is no longer a stub — it runs the repository's test suite in the Phase 10 sandbox and reports real pass/fail/output. More significantly, `apply_change` no longer ends the graph: an applied change now flows into `run_tests_after_apply`, which runs the sandbox again to verify it, and — only on a real test failure, and only up to `MAX_FIX_ITERATIONS` (2) fix attempts within a `MAX_LOOP_SECONDS` (300s) wall-clock budget — loops back to `propose_change` with an instruction built from the actual failure output. Every single one of those fix attempts still goes through a fresh `human_approval` interrupt; the loop cannot bypass approval and cannot run unboundedly, by construction (see "Testing Loop" below for the full detail). `AgentState.applied` (distinct from `approved`) gates entry into this path, so a rejected or a failed-to-apply change correctly never enters test verification.
 
 ### Tools
-**Status: PLANNED**
+**Status: IMPLEMENTED (Phase 8, read-only; 7 of 9 fully functional)**
 
-Repository analysis tools the agent can call: file search, dependency inspection, code reading, and (later) code modification and test execution tools.
+Located at `backend/tools/`. Formalizes what Phase 7's agent nodes were calling directly into a proper tool abstraction with declarative schemas, validation, and authorization boundaries.
 
-### Database
-**Status: PLANNED**
+- `schemas.py` — **Pydantic** (not dataclasses, unlike the rest of the backend) input/output models per tool. Justified specifically here: tool input may come from an LLM or external caller and needs runtime validation with clear errors, plus JSON Schema generation for future LLM tool-calling registration — a concrete need dataclasses don't meet.
+- `registry.py` — `ToolRegistry.invoke(name, raw_input)` is the single choke point: validates input, calls the handler, and turns every expected failure (bad input, an authorization boundary, an intentionally-unavailable capability) into a structured `ToolResult(success, data, error)` rather than an uncaught exception.
+- `security.py` — `resolve_safe_path`, a real path-traversal guard used by every path-taking tool. Verified against actual traversal attempts, not just asserted.
+- `file_tools.py` — `list_files` (fresh filesystem scan every call, not a possibly-stale index), `read_file` (size-capped, binary-rejecting), `analyze_code` (Phase 2 parsing for one file).
+- `search_tools.py` — `search_code` (Phase 3+4), `search_symbol` (Phase 5, exact name lookup).
+- `graph_tools.py` — `graph_query` (a **fixed enum** of pre-built Cypher queries — `repository_summary` / `importers` / `class_ancestors` — never raw Cypher text from a caller, since that would be the graph-database equivalent of exposing arbitrary shell execution), `get_dependencies` (Phase 5), and `get_callers`/`get_callees`.
 
-PostgreSQL with the pgvector extension for embeddings and application data. No database has been provisioned yet.
+**`get_callers`/`get_callees` are honestly unavailable, not approximated.** Phase 5's graph has no `CALLS` relationship (Phase 2 doesn't extract call-sites), so there is no real data to answer "who calls this?" from. Both tools return `available=False` with a clear, specific reason rather than guessing via name-matching — a plausible-looking wrong answer would be worse than an honest gap, and an agent has no way to tell the two apart otherwise.
+
+**No write or execute capability exists in this package**, by construction: there is no `write_file`, no `create_patch`, no `run_tests`, no subprocess/shell invocation anywhere in `backend/tools/`. Those are Phase 9/10's concern and, per this project's agent design, require the human-approval gate Phase 7 already built before anything is written.
+
+### Code Modification
+**Status: IMPLEMENTED (Phase 9, mechanism LOCAL TESTED; content quality REQUIRES CREDENTIALS)**
+
+Located at `backend/modification/`. Implements the safe modification workflow and wires it into Phase 7's agent for real, replacing that phase's stub.
+
+- `file_finder.py` — `find_affected_file` reuses Phase 3+4's vector+keyword retrieval and ranking unchanged: "which file does this instruction affect" is the same problem as "which code answers this question."
+- `change_generator.py` — `ChangeGenerator.generate` asks the LLM for the complete new file content. With `StubLLMProvider`, the result is a fixed placeholder, not valid code — proves the pipeline, not generation quality.
+- `diff.py` — `generate_unified_diff` via the standard library `difflib` (the same format `git diff` uses; no dependency needed).
+- `service.py` — `ModificationService.propose_change` (find file, generate content, diff — never writes) and `.apply_change` (the **only function in this entire project that writes to a repository file**). `apply_change` re-reads the target file immediately before writing; if it differs from what the proposal was generated against, it raises `StaleChangeError` rather than silently overwriting a concurrent edit — verified directly in tests.
+- Reuses Phase 8's `tools.security.resolve_safe_path` for the same path-traversal guard, rather than a second implementation of it.
+
+**A correctness fix made during this phase, applied immediately since nothing had been committed yet:** Phase 7's original topology asked for approval *before* any change existed to show (`decision -> human_approval -> modify`), which meant "approve blindly, then see a stub." Phase 9's own spec is explicit that the diff comes before approval (`Generate -> Create patch -> Show diff -> HUMAN APPROVAL -> Apply`), so `agent/graph.py` was reordered to `decision -> propose_change -> human_approval (shown the real diff) -> apply_change`. The three Phase 7 tests that asserted "approved modification still makes no changes" were updated to assert the opposite, since that's now true and correct.
+
+**What's genuinely tested locally vs. what needs a real LLM:** the full mechanism — file-finding (against real PostgreSQL), diff generation, the approval gate, applying exactly once, and refusing a stale write — is tested in `tests/modification/` (7 tests, isolated `tmp_path` fixtures, never the real project repository) and end-to-end through the agent in `tests/agent/`. Real, meaningful code changes require `AnthropicLLMProvider` and a real `LLM_API_KEY` — not present in this environment.
+
+Explicitly out of scope for Phase 9: test execution after applying a change (Phase 10's concern, see below) and multi-file changes (one proposal always targets exactly one file — unchanged by Phase 10).
 
 ### Sandbox
-**Status: PLANNED**
+**Status: IMPLEMENTED (Phase 10, LOCAL TESTED against real Docker)**
 
-An isolated execution environment for running tests and, later, executing modified code safely. Arbitrary repository code must never run directly on the host machine.
+Located at `backend/sandbox/`. An isolated Docker-container execution environment for running a target repository's own test suite. Arbitrary repository code never runs directly on this host — every test run happens inside a container, verified directly (not just asserted) in `tests/sandbox/test_docker_integration.py` and `backend/scripts/manual_sandbox_demo.py`.
+
+Components:
+- `command_detection.py` — `detect_test_command`, a pure function reusing Phase 1's `IngestionService` for file discovery rather than re-implementing directory traversal. Only Python repositories using pytest are supported this phase (detected via `pytest.ini`/`setup.cfg`/`pyproject.toml`/`tox.ini` or `test_*.py`/`*_test.py` files) — an honest, documented scope limit, the same "implement the mechanism honestly, don't fake the capability" pattern as Phase 8's `get_callers`/`get_callees`.
+- `models.py` — `SandboxLimits` (timeout, memory, CPU, PID count, network on/off) and `TestRunResult` (command, exit code, stdout, stderr, timed-out flag, duration; `.passed` is `exit_code == 0 and not timed_out`).
+- `base.py` — the `TestRunner` abstract interface. Deliberately has exactly one real implementation: unlike the embedding/LLM provider abstractions, this project must never ship an "unsandboxed" alternative, since "repository code never runs on the host" is a security invariant, not a swappable backend choice. Test doubles for this interface live only in the test suite (`tests/agent/conftest.py::FakeTestRunner`), never in `backend/`.
+- `docker_runner.py` — `DockerTestRunner`, the only real implementation. Shells out to the `docker` CLI via `subprocess` rather than adding the `docker` Python SDK as a dependency — consistent with this project's existing preference for the official low-level client over an extra abstraction layer (raw SQL via `psycopg`, raw Cypher via the `neo4j` driver, no ORM/query builder anywhere), and Docker Desktop is already part of this project's local environment (Neo4j itself runs in a container).
+- `docker/python-test.Dockerfile` — a minimal `python:3.11-slim` image with only `pytest` preinstalled, built locally as `ai-swe-agent-sandbox-python:latest` (never pushed to a registry). Deliberately does not try to be a general-purpose Python environment: a target repository's own extra dependencies (numpy, requests, ...) are not installed, since installing them would require network access the sandbox disables by default. This is a real, documented limitation, not something faked.
+
+**Isolation model, verified directly against real containers, not just configured:**
+- The repository is copied into a fresh temporary directory first; that COPY — never the real repository — is bind-mounted in. `tests/sandbox/test_docker_integration.py::test_real_container_does_not_mutate_the_original_repository` proves a file a test writes never appears on the host.
+- `--network none` by default. `test_real_container_has_no_network_access` proves a real socket connection attempt from inside the container fails.
+- `--read-only` root filesystem plus a small writable `/tmp` tmpfs and the writable workspace mount. `test_real_container_root_filesystem_is_read_only` proves a write to `/etc/` fails.
+- `--cap-drop ALL --security-opt no-new-privileges`, plus `--memory`/`--cpus`/`--pids-limit` resource caps.
+- No `-e`/`--env-file` flag is ever passed — the container never sees this host's environment variables or `.env` secrets, only whatever the image itself defines.
+- A hard `subprocess.run(..., timeout=...)` enforces `SandboxLimits.timeout_seconds`; on timeout the container is force-killed (`docker kill`) as a best-effort cleanup, since `--rm` alone does not stop a container that is still running — `test_real_container_is_killed_and_removed_on_timeout` proves no container is left behind.
+
+**What's genuinely tested locally:** all 19 tests in `tests/sandbox/` run for real in this environment — 13 pure/mocked unit tests (command detection, `subprocess.run` command construction and error mapping, no Docker involved) plus 6 real-Docker integration tests exercising an actual container for each isolation property above. The integration tests and `requires_sandbox_image` skip cleanly rather than fail if Docker isn't reachable or the image hasn't been built (see `tests/sandbox/conftest.py`) — the same "LOCAL TESTED vs REQUIRES EXTERNAL SERVICE" distinction as every other phase's external dependency.
+
+Explicitly out of scope for Phase 10's sandbox: non-Python test runners (`npm test`, etc. — no repository or worked example in this project needs them yet), per-test result parsing (only the overall exit code is used — a JUnit-XML parser would be a reasonable future addition, not faked here), and installing a target repository's own third-party dependencies inside the container (would require enabling network access, which defaults to off for security).
+
+### Testing Loop
+**Status: IMPLEMENTED (Phase 10, LOCAL TESTED against real PostgreSQL + Neo4j with a mocked test runner, plus real Docker end-to-end via the manual demo)**
+
+Extends Phase 9's `apply_change` with real test verification, and a bounded, human-approved fix loop, using the Phase 10 sandbox (see "Sandbox" above) as the test runner.
+
+```
+apply_change -[applied?]-> run_tests_after_apply -[passed]-> END ("Tests: passed.")
+                                                  -[no test command detected]-> END (honest, not faked)
+                                                  -[failed, budget remains]-> propose_change (new instruction:
+                                                                                the actual failure output)
+                                                                           -> human_approval (fresh interrupt)
+                                                                           -> apply_change -> run_tests_after_apply -> ...
+                                                  -[failed, budget exhausted]-> END ("Giving up after N fix attempt(s)")
+```
+
+- **Two independent bounds, either one stops the loop** (`agent/state.py`): `fix_iteration < MAX_FIX_ITERATIONS` (2) and a wall-clock `loop_deadline` set once, on the first post-apply test run, to `time.monotonic() + MAX_LOOP_SECONDS` (300s) — persisted across iterations so it bounds the *whole* loop, not any single pass. An iteration cap alone would still allow a slow iteration to run arbitrarily long; a time cap alone would still allow many fast-failing iterations within the budget. Both are real and independently tested (`tests/agent/test_testing_loop.py::test_time_budget_exhausted_stops_the_loop_even_within_iteration_limit` forces the time budget to 0 and proves the loop stops on the very first failure, well under the iteration cap).
+- **The human-approval gate is never bypassed, no matter how many fix attempts are made** — every iteration re-enters `propose_change -> human_approval`, and `human_approval_node`'s interrupt payload says which fix attempt it is (`"Fix attempt 1/2 requires human approval..."`) so the reviewer isn't confused by a diff that doesn't match the original request. `test_a_fix_attempt_still_requires_its_own_human_approval` proves rejecting a fix attempt stops the loop immediately, with no further test run.
+- **`modification_instruction`** (`agent/state.py`) drives `propose_change_node`: `None` on the first pass (the original question is used), overwritten by `run_tests_after_apply_node` with an instruction built from the actual failing test's stdout/stderr (bounded to 2000 characters — the same "bounded context" principle as `rag/context.py`, applied to sandbox output) on every retry, so each fix attempt targets the real failure.
+- **`applied`, not `approved`, gates entry into test verification** (`agent/graph.py::_route_after_apply`) — an approved change can still fail to apply (e.g. `StaleChangeError`), and that case must not run tests it never actually applied.
+- **No test command detected, or the sandbox itself unavailable, are reported honestly** rather than treated as a pass or a silent no-op: `"the change was applied but not verified"` / `"Tests: could not run (...)"`.
+
+**What's genuinely tested locally vs. what needs real Docker:** the routing/bounding logic itself — iteration cap, time cap, the approval-gate-per-retry guarantee, the instruction-rewriting on retry — is tested in `tests/agent/test_testing_loop.py` (4 tests, real PostgreSQL + Neo4j, `FakeTestRunner` standing in for the sandbox so the tests are deterministic and don't depend on Docker or on the stub LLM ever producing code that could plausibly pass). The full loop against a REAL Docker container and real pytest execution is demonstrated end-to-end in `backend/scripts/manual_agent_demo.py`'s scenario 4: a repository with a real test, a real applied change (the stub LLM's placeholder text, which is not valid Python), two real sandboxed test failures, two human-approved fix attempts, and an honest give-up — proving every piece of this loop works together against real infrastructure, not just against mocks.
+
+Explicitly out of scope for Phase 10's testing loop: automatically retrying the *original* request text (a raw retry without incorporating the failure would be far less likely to converge — see this project's own explicit design), and any bound on the quality of a fix attempt beyond the iteration/time caps (a real LLM could still exhaust the fix-attempt budget on a genuinely hard bug — the loop's job is to stop safely, not to guarantee success).
+
+### Database
+**Status: PARTIALLY IMPLEMENTED**
+
+PostgreSQL 18 with the pgvector extension (0.8.6) is provisioned locally in this environment: a dedicated `ai_swe_agent` database for development and `ai_swe_agent_test` for the automated test suite — both separate from this machine's other, unrelated local databases. Schema: `repositories` and `code_chunks` (see `backend/vectorstore/schema.sql`). No application-level tables beyond what Phase 3 needs (users, agent_runs, tool_calls, evaluations) exist yet — those arrive with the phases that need them.
 
 ### GitHub Integration
 **Status: PLANNED**
@@ -114,5 +280,14 @@ Repository content is treated as untrusted data, never as instructions. No arbit
 - `.env.example` with placeholder configuration values
 - `.gitignore` covering environment files, dependency directories, and local artifacts
 - **Phase 1: Repository ingestion** (`backend/ingestion/`) — see the "Repository Ingestion" section above. Covered by an automated test suite in `tests/ingestion/` (49 tests) and a manual demonstration script at `backend/scripts/manual_ingestion_demo.py`.
+- **Phase 2: Code parsing** (`backend/parsing/`) — see the "Code Parsing" section above. Covered by an automated test suite in `tests/parsing/` (27 tests) and a manual demonstration script at `backend/scripts/manual_parsing_demo.py`.
+- **Phase 3: Vector search foundation** (`backend/vectorstore/`) — see the "Vector Search Foundation" section above. Covered by an automated test suite in `tests/vectorstore/` (18 tests, run against a real local PostgreSQL + pgvector instance) and a manual demonstration script at `backend/scripts/manual_vectorstore_demo.py`. Real semantic embeddings (`OpenAIEmbeddingProvider`) require `EMBEDDING_API_KEY`, which is not present in this environment — that code path is unit-tested with a mocked client, not a live API call.
+- **Phase 4: Code RAG** (`backend/rag/`) — see the "Retrieval Layer (Code RAG)" section above. Covered by an automated test suite in `tests/rag/` (21 tests, run against real PostgreSQL) and a manual demonstration script at `backend/scripts/manual_rag_demo.py`. Real LLM answers (`AnthropicLLMProvider`) require `LLM_API_KEY`, which is not present in this environment — that code path is unit-tested with a mocked client, not a live API call.
+- **Phase 5: Knowledge graph** (`backend/graph/`) — see the "Knowledge Graph" section above. Covered by an automated test suite in `tests/graph/` (28 tests, run against a real local Neo4j instance) and a manual demonstration script at `backend/scripts/manual_graph_demo.py`. No credential gap here — Neo4j runs locally and every test exercises it for real.
+- **Phase 6: Hybrid retrieval** (`backend/hybrid/`) — see the "Hybrid Retrieval" section above. Covered by an automated test suite in `tests/hybrid/` (12 tests, run against real PostgreSQL and Neo4j together) and a manual demonstration script at `backend/scripts/manual_hybrid_demo.py`.
+- **Phase 7: Stateful agent** (`backend/agent/`) — see the "Agent Layer" section above. Covered by an automated test suite in `tests/agent/test_classification.py` + `test_service.py` (19 tests, run against real PostgreSQL and Neo4j together, including the full human-approval interrupt/resume cycle) and a manual demonstration script at `backend/scripts/manual_agent_demo.py`. Phase 10 below adds 4 more tests (`test_testing_loop.py`) for the fix-loop behavior added to this same graph.
+- **Phase 8: Repository tools** (`backend/tools/`) — see the "Tools" section above. Covered by an automated test suite in `tests/tools/` (30 tests: unit tests for security/file-tools/registry plus integration tests against real PostgreSQL + Neo4j) and a manual demonstration script at `backend/scripts/manual_tools_demo.py`.
+- **Phase 9: Code modification** (`backend/modification/`) — see the "Code Modification" section above. Covered by an automated test suite in `tests/modification/` (7 tests, real PostgreSQL, isolated `tmp_path` fixtures) plus 3 updated agent tests proving the write actually happens on approval. Manual demonstration scripts at `backend/scripts/manual_modification_demo.py` (standalone) and `backend/scripts/manual_agent_demo.py` (wired into the full agent). Real code-change quality requires `LLM_API_KEY`, not present in this environment.
+- **Phase 10: Sandbox + testing loop** (`backend/sandbox/`) — see the "Sandbox" and "Testing Loop" sections above. Covered by an automated test suite in `tests/sandbox/` (19 tests: unit tests for command detection and mocked Docker command construction, plus 6 real-Docker integration tests) and `tests/agent/test_testing_loop.py` (4 tests, real PostgreSQL + Neo4j, `FakeTestRunner`). Manual demonstration scripts at `backend/scripts/manual_sandbox_demo.py` (standalone, real Docker) and `backend/scripts/manual_agent_demo.py` (the full fix loop against real Docker, end-to-end).
 
-Everything else in this document — parsing, embeddings, vector search, the knowledge graph, hybrid retrieval, the agent layer, tools, the database, the sandbox, GitHub integration, evaluation, and observability — remains PLANNED.
+Everything else in this document — GitHub integration, evaluation, and observability — remains PLANNED.

@@ -1,0 +1,56 @@
+# Runtime dependencies for the backend.
+#
+# Python source parsing uses the standard library `ast` module — no
+# dependency needed. For every other supported language there is no
+# usable parser in the standard library, so Tree-sitter is used instead
+# (real grammars, consistent API across languages, avoids fragile
+# regex-based extraction). Versions are pinned together because the
+# per-language grammar packages must match the ABI version the
+# `tree-sitter` core package supports.
+tree-sitter==0.23.2
+tree-sitter-javascript==0.23.1
+tree-sitter-typescript==0.23.2
+tree-sitter-java==0.23.5
+tree-sitter-go==0.23.4
+tree-sitter-c==0.23.2
+tree-sitter-cpp==0.23.2
+
+# Phase 3: vector search foundation.
+# psycopg (v3): modern, actively maintained PostgreSQL driver.
+# pgvector: registers the `vector` type adapter for psycopg (list <-> pgvector column).
+# openai: official client for the production embedding provider (text-embedding-3-small).
+#   No ORM (e.g. SQLAlchemy) is used — the schema is two tables with simple
+#   queries, where raw parameterized SQL is clearer and avoids an
+#   unjustified dependency for this project's current size.
+psycopg[binary]==3.2.13
+pgvector==0.4.2
+openai==2.48.0
+
+# Phase 4: code RAG.
+# anthropic: official client for the production LLM provider that generates
+#   the final grounded answer. Chosen as the default LLM provider since it's
+#   this project's home ecosystem; the LLMProvider abstraction (rag/llm/base.py)
+#   means swapping providers later does not touch the rest of the pipeline.
+anthropic==0.125.0
+
+# Phase 5: code knowledge graph.
+# neo4j: official Python driver for Neo4j, used with raw Cypher (no query
+#   builder/ORM — Cypher is already the right level of expressiveness for
+#   graph traversal queries).
+neo4j==5.28.6
+
+# Phase 7: stateful agent workflow.
+# langgraph: explicit state machine + built-in checkpointing, which is what
+#   makes the human-approval interrupt/resume mechanism (agent/nodes.py)
+#   possible without hand-rolling persistence. Chosen per this project's own
+#   technology policy ("LangGraph for the stateful agent") and because a
+#   single hand-written if/else loop could not durably pause across process
+#   boundaries the way a real approval workflow needs to.
+langgraph==0.6.11
+
+# Phase 8: repository tools.
+# pydantic: declarative input/output schemas with runtime validation and
+#   JSON Schema generation (for future LLM tool-calling registration) —
+#   the first place in this project with a genuine external-input-validation
+#   need; dataclasses (used everywhere else) don't validate at runtime.
+pydantic==2.13.5
