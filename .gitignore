@@ -36,6 +36,9 @@ build/
 # Local data
 data/
 
+# Local observability trace files (Phase 13) — runtime output, never committed
+.observability/
+
 # Secrets
 *.pem
 *.key

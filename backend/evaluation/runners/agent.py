@@ -23,7 +23,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from graph.builder import GraphBuilder
 from graph.client import Neo4jClient
@@ -36,6 +36,9 @@ from vectorstore.store import VectorStore
 from rag.llm.stub_provider import StubLLMProvider
 
 from sandbox.docker_runner import DockerTestRunner
+
+from observability.recorder import JSONFileRecorder
+from observability.tracer import Tracer
 
 from agent.service import AgentService
 from agent.state import MAX_RETRIES
@@ -59,7 +62,8 @@ def _cleanup(vector_store: VectorStore, repository_id: int, neo4j_client: Neo4jC
 
 def _evaluate_routing_case(case: AgentCase, service: AgentService, repository_id: int, root_path: str) -> CaseResult:
     start = time.monotonic()
-    result = service.run(case.question, repository_id, root_path, thread_id=str(uuid.uuid4()))
+    thread_id = str(uuid.uuid4())
+    result = service.run(case.question, repository_id, root_path, thread_id=thread_id)
     latency = time.monotonic() - start
 
     classification_correct = any(
@@ -93,6 +97,7 @@ def _evaluate_routing_case(case: AgentCase, service: AgentService, repository_id
         metrics=metrics,
         latency_seconds=latency,
         execution_log=list(result.execution_log),
+        trace_id=thread_id,
     )
 
 
@@ -103,7 +108,8 @@ def _evaluate_bounded_retry_case(service: AgentService, repository_id: int, root
     never fabricate an answer when there is no evidence for one.
     """
     start = time.monotonic()
-    result = service.run("What does this do?", repository_id, root_path, thread_id=str(uuid.uuid4()))
+    thread_id = str(uuid.uuid4())
+    result = service.run("What does this do?", repository_id, root_path, thread_id=thread_id)
     latency = time.monotonic() - start
 
     retry_entries = [e for e in result.execution_log if "retrying" in e]
@@ -126,15 +132,27 @@ def _evaluate_bounded_retry_case(service: AgentService, repository_id: int, root
         metrics=metrics,
         latency_seconds=latency,
         execution_log=list(result.execution_log),
+        trace_id=thread_id,
     )
 
 
-def run_agent_evaluation(vector_store: VectorStore, neo4j_client: Neo4jClient) -> List[CaseResult]:
+def run_agent_evaluation(
+    vector_store: VectorStore, neo4j_client: Neo4jClient, tracer: Optional[Tracer] = None
+) -> List[CaseResult]:
+    """Phase 13 connection: defaults to a real `Tracer(JSONFileRecorder())`
+    (not `NullRecorder`) — an evaluation run is exactly the case where
+    "connect observability with evaluation" has real value: a failing
+    case's `trace_id` (see each result's `CaseResult.trace_id`) can be
+    inspected end-to-end with `backend/scripts/inspect_trace.py`. This
+    is additive plumbing only — no change to the evaluation framework's
+    own control flow, metrics, or case definitions.
+    """
     embedding_provider = DeterministicLocalEmbeddingProvider()
     # Neither sample repo below has any test files, so DockerTestRunner
     # raises NoTestCommandError before Docker is ever invoked — this
     # runner doesn't need Docker reachable to evaluate routing/retries.
     test_runner = DockerTestRunner()
+    tracer = tracer or Tracer(JSONFileRecorder())
 
     results: List[CaseResult] = []
 
@@ -148,7 +166,7 @@ def run_agent_evaluation(vector_store: VectorStore, neo4j_client: Neo4jClient) -
         index_result = IndexingService(embedding_provider, vector_store).index_repository(str(root))
         GraphBuilder(neo4j_client).build(str(root), ingestion_result, parsing_result)
 
-        service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner)
+        service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner, tracer)
         try:
             for case in AGENT_CASES:
                 results.append(_evaluate_routing_case(case, service, index_result.repository_id, root_path))
@@ -164,7 +182,7 @@ def run_agent_evaluation(vector_store: VectorStore, neo4j_client: Neo4jClient) -
         index_result = IndexingService(embedding_provider, vector_store).index_repository(str(root))
         GraphBuilder(neo4j_client).build(str(root), ingestion_result, parsing_result)
 
-        service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner)
+        service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner, tracer)
         try:
             results.append(_evaluate_bounded_retry_case(service, index_result.repository_id, root_path))
         finally:

@@ -62,6 +62,9 @@ from rag.llm.stub_provider import StubLLMProvider
 
 from sandbox.docker_runner import DockerTestRunner
 
+from observability.recorder import JSONFileRecorder
+from observability.tracer import Tracer
+
 from agent.service import AgentService
 
 DATABASE_URL = os.environ.get(
@@ -123,7 +126,13 @@ def main() -> None:
             GraphBuilder(neo4j_client).build(str(root_with_tests), ingestion_result_2, parsing_result_2)
 
             test_runner = DockerTestRunner()
-            service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner)
+            # Phase 13: a real JSONFileRecorder-backed tracer, so every
+            # question/approval/fix-loop below produces a real, locally
+            # inspectable trace — run this script, then:
+            #   .venv/bin/python backend/scripts/inspect_trace.py --list
+            #   .venv/bin/python backend/scripts/inspect_trace.py <thread_id>
+            tracer = Tracer(JSONFileRecorder())
+            service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner, tracer)
             root_path = str(root.resolve())
             root_path_2 = str(root_with_tests.resolve())
             cleanup_root_paths.extend([root_path, root_path_2])
@@ -186,6 +195,14 @@ def main() -> None:
                 else:
                     print(f"  -> Response: {loop_result.final_response}")
                 print()
+
+            print("--- Traces recorded (Phase 13) ---")
+            print("  Every question above got its own trace, keyed by its thread_id. Inspect one with:")
+            print("    .venv/bin/python backend/scripts/inspect_trace.py <thread_id>")
+            print("  or list every trace this run produced:")
+            print("    .venv/bin/python backend/scripts/inspect_trace.py --list")
+            for label, tid in [("3. Modify", modify_thread), ("4. Modify + testing loop", loop_thread)]:
+                print(f"  [{label}] thread_id / trace_id = {tid}")
         finally:
             conn = vector_store.connect()
             with conn.cursor() as cur:

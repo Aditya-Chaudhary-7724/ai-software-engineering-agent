@@ -49,6 +49,13 @@ class CaseResult:
     failure_reason: Optional[str] = None
     skipped: bool = False
     skip_reason: Optional[str] = None
+    # Phase 13 connection: set to the AgentService thread_id (== the
+    # observability trace_id — see agent/service.py) when this case ran
+    # a real agent, so a failing case can be inspected end-to-end with
+    # `backend/scripts/inspect_trace.py <trace_id>`. None for cases that
+    # don't run the agent (pure retrieval/RAG cases) or when tracing
+    # wasn't wired in for a given run.
+    trace_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

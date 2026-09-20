@@ -80,6 +80,11 @@ def render_text_report(report: EvaluationReport) -> str:
                 lines.append(f"      retrieved: {result.retrieval_results}")
             if result.failure_reason:
                 lines.append(f"      failure_reason: {result.failure_reason}")
+            if result.trace_id:
+                lines.append(
+                    f"      trace_id: {result.trace_id}  "
+                    f"(inspect: .venv/bin/python backend/scripts/inspect_trace.py {result.trace_id})"
+                )
 
         lines.append("")
 

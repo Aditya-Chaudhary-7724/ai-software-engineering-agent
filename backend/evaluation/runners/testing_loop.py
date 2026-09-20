@@ -20,7 +20,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import agent.nodes as agent_nodes
 from graph.builder import GraphBuilder
@@ -32,6 +32,9 @@ from vectorstore.service import IndexingService
 from vectorstore.store import VectorStore
 
 from rag.llm.stub_provider import StubLLMProvider
+
+from observability.recorder import JSONFileRecorder
+from observability.tracer import Tracer
 
 from agent.service import AgentService
 from agent.state import MAX_FIX_ITERATIONS
@@ -68,7 +71,7 @@ def _run_to_completion(service: AgentService, repository_id: int, root_path: str
     while result.status == "awaiting_approval" and approvals < max_rounds:
         approvals += 1
         result = service.resume(thread_id=thread_id, approved=True)
-    return result, approvals
+    return result, approvals, thread_id
 
 
 def _evaluate_first_pass_success(service_factory, index_result, root_path) -> CaseResult:
@@ -76,7 +79,7 @@ def _evaluate_first_pass_success(service_factory, index_result, root_path) -> Ca
     test_runner = ScriptedTestRunner([make_result(passed=True)])
     service = service_factory(test_runner)
 
-    result, approvals = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=5)
+    result, approvals, thread_id = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=5)
 
     success = "Tests: passed." in (result.final_response or "")
     exactly_one_approval = approvals == 1
@@ -93,6 +96,7 @@ def _evaluate_first_pass_success(service_factory, index_result, root_path) -> Ca
         metrics=metrics,
         latency_seconds=time.monotonic() - start,
         execution_log=list(result.execution_log),
+        trace_id=thread_id,
     )
 
 
@@ -101,7 +105,7 @@ def _evaluate_fail_then_recover(service_factory, index_result, root_path) -> Cas
     test_runner = ScriptedTestRunner([make_result(passed=False, stderr="AssertionError: boom"), make_result(passed=True)])
     service = service_factory(test_runner)
 
-    result, approvals = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=5)
+    result, approvals, thread_id = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=5)
 
     recovered = "Tests: passed." in (result.final_response or "")
     fix_attempt_logged = any("attempting fix 1/" in e for e in result.execution_log)
@@ -120,6 +124,7 @@ def _evaluate_fail_then_recover(service_factory, index_result, root_path) -> Cas
         metrics=metrics,
         latency_seconds=time.monotonic() - start,
         execution_log=list(result.execution_log),
+        trace_id=thread_id,
     )
 
 
@@ -129,7 +134,7 @@ def _evaluate_iteration_limit(service_factory, index_result, root_path) -> CaseR
     test_runner = ScriptedTestRunner(always_fails)
     service = service_factory(test_runner)
 
-    result, approvals = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=MAX_FIX_ITERATIONS + 3)
+    result, approvals, thread_id = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=MAX_FIX_ITERATIONS + 3)
 
     gave_up_honestly = f"Giving up after {MAX_FIX_ITERATIONS} fix attempt(s)" in (result.final_response or "")
     exact_approvals = approvals == MAX_FIX_ITERATIONS + 1
@@ -148,6 +153,7 @@ def _evaluate_iteration_limit(service_factory, index_result, root_path) -> CaseR
         metrics=metrics,
         latency_seconds=time.monotonic() - start,
         execution_log=list(result.execution_log),
+        trace_id=thread_id,
     )
 
 
@@ -164,7 +170,7 @@ def _evaluate_wall_clock_timeout(service_factory, index_result, root_path) -> Ca
     original_budget = agent_nodes.MAX_LOOP_SECONDS
     agent_nodes.MAX_LOOP_SECONDS = 0
     try:
-        result, approvals = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=5)
+        result, approvals, thread_id = _run_to_completion(service, index_result.repository_id, root_path, max_rounds=5)
     finally:
         agent_nodes.MAX_LOOP_SECONDS = original_budget
 
@@ -183,6 +189,7 @@ def _evaluate_wall_clock_timeout(service_factory, index_result, root_path) -> Ca
         metrics=metrics,
         latency_seconds=time.monotonic() - start,
         execution_log=list(result.execution_log),
+        trace_id=thread_id,
     )
 
 
@@ -216,11 +223,19 @@ def _evaluate_approval_cannot_be_bypassed(service_factory, index_result, root_pa
         metrics=metrics,
         latency_seconds=time.monotonic() - start,
         execution_log=list(result.execution_log),
+        trace_id=thread_id,
     )
 
 
-def run_testing_loop_evaluation(vector_store: VectorStore, neo4j_client: Neo4jClient) -> List[CaseResult]:
+def run_testing_loop_evaluation(
+    vector_store: VectorStore, neo4j_client: Neo4jClient, tracer: Optional[Tracer] = None
+) -> List[CaseResult]:
+    """Phase 13 connection: defaults to a real `Tracer(JSONFileRecorder())`
+    so a failing case's `trace_id` can be inspected end-to-end (see
+    `run_agent_evaluation`'s docstring for the same rationale).
+    """
     embedding_provider = DeterministicLocalEmbeddingProvider()
+    tracer = tracer or Tracer(JSONFileRecorder())
     results: List[CaseResult] = []
 
     case_builders = [
@@ -243,7 +258,7 @@ def run_testing_loop_evaluation(vector_store: VectorStore, neo4j_client: Neo4jCl
             GraphBuilder(neo4j_client).build(str(root), ingestion_result, parsing_result)
 
             def service_factory(test_runner):
-                return AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner)
+                return AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner, tracer)
 
             try:
                 results.append(builder(service_factory, index_result, root_path))

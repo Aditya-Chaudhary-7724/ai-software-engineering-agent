@@ -5,6 +5,13 @@ Each conversation needs a stable `thread_id` (any caller-chosen string)
 so the checkpointer can resume the exact paused state after a human
 approval decision — the same `thread_id` must be passed to both `run`
 and the matching `resume`.
+
+Phase 13: `thread_id` doubles as the observability `trace_id` — one
+trace per conversation, spanning every `run()`/`resume()` call (human
+approval, fix-loop retries) rather than inventing a second ID. Tracing
+defaults to a `Tracer(NullRecorder())` (records spans in-process for
+correctness, persists nothing) when no `tracer` is supplied, so every
+existing call site and test keeps working unchanged.
 """
 
 from typing import Optional
@@ -19,6 +26,10 @@ from rag.llm.base import LLMProvider
 
 from sandbox.base import TestRunner
 
+from observability.providers import TracedLLMProvider, TracedTestRunner
+from observability.recorder import NullRecorder
+from observability.tracer import Tracer
+
 from agent.graph import build_agent_graph
 from agent.models import AgentRunResult
 from agent.state import initial_state
@@ -32,18 +43,37 @@ class AgentService:
         embedding_provider: EmbeddingProvider,
         llm_provider: LLMProvider,
         test_runner: TestRunner,
+        tracer: Optional[Tracer] = None,
     ) -> None:
-        self._graph = build_agent_graph(vector_store, neo4j_client, embedding_provider, llm_provider, test_runner)
+        self._tracer = tracer or Tracer(NullRecorder())
+        traced_llm_provider = TracedLLMProvider(llm_provider, self._tracer)
+        traced_test_runner = TracedTestRunner(test_runner, self._tracer)
+        self._graph = build_agent_graph(
+            vector_store, neo4j_client, embedding_provider, traced_llm_provider, traced_test_runner, self._tracer
+        )
 
     def run(self, question: str, repository_id: int, root_path: str, thread_id: str) -> AgentRunResult:
+        self._tracer.start_trace(
+            thread_id, "agent_thread", attributes={"question": question, "repository_id": repository_id, "root_path": root_path}
+        )
         config = {"configurable": {"thread_id": thread_id}}
-        result = self._graph.invoke(initial_state(question, repository_id, root_path), config=config)
-        return self._to_result(result)
+        with self._tracer.span(thread_id, "agent_run", "agent") as span:
+            result = self._graph.invoke(initial_state(question, repository_id, root_path), config=config)
+            if result.get("__interrupt__"):
+                span.status = "interrupted"
+        agent_result = self._to_result(result)
+        self._tracer.finish_trace(thread_id, status=agent_result.status)
+        return agent_result
 
     def resume(self, thread_id: str, approved: bool) -> AgentRunResult:
         config = {"configurable": {"thread_id": thread_id}}
-        result = self._graph.invoke(Command(resume=approved), config=config)
-        return self._to_result(result)
+        with self._tracer.span(thread_id, "agent_resume", "approval", attributes={"approved": approved}) as span:
+            result = self._graph.invoke(Command(resume=approved), config=config)
+            if result.get("__interrupt__"):
+                span.status = "interrupted"
+        agent_result = self._to_result(result)
+        self._tracer.finish_trace(thread_id, status=agent_result.status)
+        return agent_result
 
     @staticmethod
     def _to_result(result: dict) -> AgentRunResult:

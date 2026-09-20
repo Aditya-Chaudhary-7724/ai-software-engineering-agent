@@ -67,3 +67,19 @@ pydantic==2.13.5
 #   out to the `git` CLI via `subprocess` instead — no dependency needed,
 #   same pattern as Phase 10's Docker sandbox.
 requests==2.32.5
+
+# Phase 13: observability/tracing.
+# No new dependency for the core tracer (backend/observability/tracer.py,
+#   recorder.py, redaction.py) — it's stdlib (contextvars, logging, json,
+#   dataclasses) only, by design, since the local tracing path must work
+#   without any external service or credentials.
+# langsmith: was ALREADY an installed transitive dependency of langgraph/
+#   langchain-core before this phase (not newly added). Used only by the
+#   OPTIONAL, opt-in LangSmithExporter (observability/exporters/langsmith_exporter.py)
+#   — evaluated against Langfuse and chosen for its first-class LangGraph
+#   support and zero marginal dependency cost; never imported or
+#   constructed by default anywhere in this codebase, and not exercised
+#   against a live account in this environment (no LANGSMITH_API_KEY).
+#   Pinned explicitly here now that this project's own code imports it
+#   directly, rather than relying on it staying available transitively.
+langsmith==0.4.37

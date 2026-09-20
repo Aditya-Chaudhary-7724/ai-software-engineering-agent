@@ -1,8 +1,12 @@
 """Builds the default ToolRegistry with every Phase 8 tool registered."""
 
+from typing import Optional
+
 from graph.client import Neo4jClient
 from vectorstore.embeddings.base import EmbeddingProvider
 from vectorstore.store import VectorStore
+
+from observability.tracer import Tracer
 
 from tools.file_tools import analyze_code, list_files, read_file
 from tools.graph_tools import get_callees, get_callers, make_get_dependencies, make_graph_query
@@ -29,9 +33,9 @@ from tools.search_tools import make_search_code, make_search_symbol
 
 
 def build_default_registry(
-    vector_store: VectorStore, neo4j_client: Neo4jClient, embedding_provider: EmbeddingProvider
+    vector_store: VectorStore, neo4j_client: Neo4jClient, embedding_provider: EmbeddingProvider, tracer: Optional[Tracer] = None
 ) -> ToolRegistry:
-    registry = ToolRegistry()
+    registry = ToolRegistry(tracer=tracer)
 
     registry.register(
         Tool(

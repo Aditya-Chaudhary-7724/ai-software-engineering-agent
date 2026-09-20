@@ -17,7 +17,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from graph.builder import GraphBuilder
 from graph.client import Neo4jClient
@@ -33,6 +33,9 @@ from modification.service import ModificationService
 from rag.llm.stub_provider import StubLLMProvider
 
 from sandbox.docker_runner import DockerTestRunner
+
+from observability.recorder import JSONFileRecorder
+from observability.tracer import Tracer
 
 from agent.service import AgentService
 from agent.state import MAX_FIX_ITERATIONS
@@ -54,7 +57,7 @@ def _cleanup(vector_store: VectorStore, repository_id: int, neo4j_client: Neo4jC
     neo4j_client.run("MATCH (r:Repository {root_path: $root_path}) DETACH DELETE r", root_path=root_path)
 
 
-def _evaluate_approval_and_single_file_scope(vector_store: VectorStore, neo4j_client: Neo4jClient) -> CaseResult:
+def _evaluate_approval_and_single_file_scope(vector_store: VectorStore, neo4j_client: Neo4jClient, tracer: Tracer) -> CaseResult:
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="eval-mod-approval-") as tmp_dir:
         root = Path(tmp_dir)
@@ -70,7 +73,7 @@ def _evaluate_approval_and_single_file_scope(vector_store: VectorStore, neo4j_cl
 
         try:
             service = AgentService(
-                vector_store, neo4j_client, embedding_provider, StubLLMProvider(), DockerTestRunner()
+                vector_store, neo4j_client, embedding_provider, StubLLMProvider(), DockerTestRunner(), tracer
             )
 
             reject_thread = str(uuid.uuid4())
@@ -120,6 +123,7 @@ def _evaluate_approval_and_single_file_scope(vector_store: VectorStore, neo4j_cl
                 passed=passed,
                 metrics=metrics,
                 latency_seconds=time.monotonic() - start,
+                trace_id=approve_thread,
             )
         finally:
             _cleanup(vector_store, index_result.repository_id, neo4j_client, root_path)
@@ -180,7 +184,7 @@ def _evaluate_stale_change_protection(vector_store: VectorStore) -> CaseResult:
                 conn.close()
 
 
-def _evaluate_failed_change_not_silently_accepted(vector_store: VectorStore, neo4j_client: Neo4jClient) -> CaseResult:
+def _evaluate_failed_change_not_silently_accepted(vector_store: VectorStore, neo4j_client: Neo4jClient, tracer: Tracer) -> CaseResult:
     """A change that breaks the test suite must be reported as a
     failure — never as a false "Tests: passed" — even though the write
     itself succeeded. Requires real Docker; skipped (not failed) if
@@ -217,7 +221,7 @@ def _evaluate_failed_change_not_silently_accepted(vector_store: VectorStore, neo
 
         try:
             service = AgentService(
-                vector_store, neo4j_client, embedding_provider, StubLLMProvider(), DockerTestRunner()
+                vector_store, neo4j_client, embedding_provider, StubLLMProvider(), DockerTestRunner(), tracer
             )
             thread_id = str(uuid.uuid4())
             result = service.run("Fix the greet function", index_result.repository_id, root_path, thread_id)
@@ -248,14 +252,22 @@ def _evaluate_failed_change_not_silently_accepted(vector_store: VectorStore, neo
                 metrics=metrics,
                 latency_seconds=time.monotonic() - start,
                 execution_log=list(result.execution_log),
+                trace_id=thread_id,
             )
         finally:
             _cleanup(vector_store, index_result.repository_id, neo4j_client, root_path)
 
 
-def run_modification_evaluation(vector_store: VectorStore, neo4j_client: Neo4jClient) -> List[CaseResult]:
+def run_modification_evaluation(
+    vector_store: VectorStore, neo4j_client: Neo4jClient, tracer: Optional[Tracer] = None
+) -> List[CaseResult]:
+    """Phase 13 connection: defaults to a real `Tracer(JSONFileRecorder())`
+    so a failing case's `trace_id` can be inspected end-to-end (see
+    `run_agent_evaluation`'s docstring for the same rationale).
+    """
+    tracer = tracer or Tracer(JSONFileRecorder())
     return [
-        _evaluate_approval_and_single_file_scope(vector_store, neo4j_client),
+        _evaluate_approval_and_single_file_scope(vector_store, neo4j_client, tracer),
         _evaluate_stale_change_protection(vector_store),
-        _evaluate_failed_change_not_silently_accepted(vector_store, neo4j_client),
+        _evaluate_failed_change_not_silently_accepted(vector_store, neo4j_client, tracer),
     ]

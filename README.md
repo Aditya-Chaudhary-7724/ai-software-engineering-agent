@@ -105,7 +105,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 10. Sandbox + testing loop — **implemented** (real Docker sandbox; bounded, human-approved fix loop after an applied change)
 11. GitHub integration — **implemented** (real clone/metadata/pipeline integration; push and PR creation gated behind explicit authorization/approval, never exercised against a repository this project doesn't own)
 12. Evaluation — **implemented** (real, reproducible metrics against real services; no invented numbers — see the Phase 12 section below)
-13. Observability
+13. Observability — **implemented** (real tracing wired into the actual agent execution, local-first, fail-safe; optional LangSmith exporter mechanism-tested only — see the Phase 13 section below)
 14. Security
 15. Production deployment
 
@@ -122,7 +122,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 
 ## Status
 
-Project setup completed. **Phases 1-12 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, GitHub integration, and the evaluation framework) are implemented.**
+Project setup completed. **Phases 1-13 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, GitHub integration, the evaluation framework, and observability/tracing) are implemented.**
 
 ### Phase 1 — Repository Ingestion (implemented)
 
@@ -501,4 +501,58 @@ set -a; source .env; set +a
 .venv/bin/python backend/scripts/run_evaluation.py                  # prints the full report; exit code reflects pass/fail
 .venv/bin/python backend/scripts/run_evaluation.py --json out.json  # also export raw results as JSON
 .venv/bin/python backend/scripts/run_evaluation.py --llm-judge       # adds a real-LLM RAG metric (requires LLM_API_KEY)
+```
+
+### Phase 13 — Observability & Tracing (implemented)
+
+The `backend/observability` package adds real tracing wired directly into the existing Phase 7/9/10 agent execution — not a disconnected demo. One agent run, across every `resume()` (human approval, fix-loop retries), becomes a single correlated, locally-inspectable trace.
+
+```
+Trace (trace_id == thread_id — the same ID Phase 7 already required, not a second one)
+  agent_run (agent) -> task_analyzer -> planner -> repository_search (retrieval) -> graph_search (graph)
+                     -> code_analyzer -> decision -> answer -> llm_call (llm, nested)
+                                       -> propose_change (modification) -> llm_call (nested)
+                                          -> human_approval (approval) -> apply_change (modification)
+                                             -> run_tests_after_apply (sandbox) -> sandbox_run (nested)
+                                             -> [fix-loop retries, each re-entering propose_change]
+  agent_resume (approval) -> ... (same trace, new top-level span per resume() call)
+```
+
+**Why this exists:** before this phase, the only visibility into a run was `execution_log` — a flat list of safe summary strings with no timing, no hierarchy, no cross-service correlation, and no way to inspect a specific past run afterward. This phase adds structure and local persistence without changing what any existing phase does.
+
+**What's captured:** run/trace ID, timestamps, per-span duration, node/step name and kind, per-step status (`ok`/`error`/`interrupted`), tool name + argument KEYS (never values), retrieval/graph hit counts, LLM provider class + prompt/response LENGTH, sandbox outcome (passed/exit code/timed-out), retry iteration, and human-approval state.
+
+**What's deliberately NOT captured:** token usage (the current `LLMProvider` interface returns a plain string — nothing real to report, so nothing is fabricated); prompts, responses, diffs, file contents, or stdout/stderr text (only lengths and outcome booleans); raw chain-of-thought (this project's LLM calls never expose it in the first place); tool argument values.
+
+**Security/redaction (`observability/redaction.py`), applied right before data reaches a recorder, exporter, or log line:**
+- **Key-based**: a WHOLE TOKEN (split on `_`/`-`/camelCase, never a raw substring) matching `token`/`key`/`secret`/`password`/`authorization`/`credential`/... → the value is replaced with `***REDACTED***`. Whole-token matching is load-bearing: an earlier substring-based version redacted `keyword_hit_count` purely because "key" is a substring of "keyword" — a real bug found by inspecting an actual trace, fixed, and covered by a regression test.
+- **Value-based**: a string matching a known secret SHAPE (a GitHub token prefix, a `Bearer ...` header, an `sk-...` key, a DB URL with an embedded password) is redacted even under an innocuous key.
+- **Length-bounded**: strings truncated to 500 chars, lists capped at 20 items — the concrete mechanism behind "don't log the user's entire source code."
+- Never raises: a redaction bug must not be able to crash the agent either.
+
+**Fail-safe by construction, proven with a real broken recorder, not just asserted:** `tests/observability/test_agent_integration.py::test_a_broken_recorder_does_not_break_a_real_agent_run` wires a `Recorder` whose every method raises into a REAL `AgentService` and proves a real end-to-end run (real Postgres retrieval, real Neo4j graph search, a real LLM call, a real routing decision) completes exactly as if untraced. LangGraph's own `interrupt()` signal (`GraphInterrupt`) is explicitly not treated as an error — a span that observes it is marked `interrupted`, and the signal is re-raised untouched so LangGraph's pause/resume machinery is never disturbed.
+
+**Backward compatible, proven, not just asserted:** `tracer` is optional everywhere it was added (`AgentService`, `build_agent_graph`, `ToolRegistry`), defaulting to a no-op `Tracer(NullRecorder())` — every Phase 1-12 test and call site keeps working unchanged, and a dedicated test proves the same question against the same repository produces an identical result whether or not a tracer is supplied.
+
+**Inspecting a trace locally — no external service or credentials ever required:**
+```bash
+.venv/bin/python backend/scripts/inspect_trace.py --list            # every trace_id recorded so far
+.venv/bin/python backend/scripts/inspect_trace.py <trace_id>         # rendered, indented span tree
+.venv/bin/python backend/scripts/inspect_trace.py <trace_id> --json  # the raw trace as JSON
+```
+`manual_agent_demo.py` now records real traces via `Tracer(JSONFileRecorder())` and prints the `thread_id`/`trace_id` for each scenario — run it, then `inspect_trace.py` on the printed ID for a complete walkthrough.
+
+**Connected to Phase 12 evaluation, additively** — `CaseResult` gained one optional `trace_id` field; the `agent`/`modification`/`testing_loop` evaluation runners now default to a real `Tracer(JSONFileRecorder())` and record each case's trace ID, and `run_evaluation.py`'s report prints the exact `inspect_trace.py` command under any case that ran the real agent. No other change to the evaluation framework's control flow, metrics, or case definitions.
+
+**LangSmith/Langfuse — evaluated, not assumed:** this agent is already built on LangGraph, and LangSmith has first-class LangGraph support with the `langsmith` package already an installed transitive dependency, making it the better-fit option over Langfuse (which would add a new dependency for no extra benefit here). That said, this is a single-developer local project — the real requirement (inspecting one run end-to-end) is already fully met locally, with no hosted account or network dependency. So `observability/exporters/langsmith_exporter.py::LangSmithExporter` is a genuine, working, OPTIONAL adapter behind a one-method `TraceExporter` interface — **not wired in by default, and not exercised against a live LangSmith account in this environment** (no `LANGSMITH_API_KEY` configured). Its request-shaping is unit-tested against a mocked client only — the same "mechanism proven, live behavior needs real credentials" pattern as every other optional external integration in this project.
+
+**What's genuinely tested locally:** 78 tests (75 in `tests/observability/`, 3 added to `tests/tools/test_registry.py`) covering redaction, all three recorders, the core tracer's span lifecycle/nesting/interrupt-handling/fail-safety, the provider and node-tracing decorators, structured JSON logging, the trace renderer, and the mocked LangSmith exporter — plus 4 real end-to-end integration tests through the actual agent against real PostgreSQL and Neo4j.
+
+**Running it:**
+```bash
+set -a; source .env; set +a
+.venv/bin/python -m pytest tests/observability                     # 75 tests; DB/Neo4j-backed ones skip cleanly if unreachable
+.venv/bin/python backend/scripts/manual_agent_demo.py               # records real traces, prints their IDs
+.venv/bin/python backend/scripts/inspect_trace.py --list
+.venv/bin/python backend/scripts/inspect_trace.py <trace_id>
 ```
