@@ -14,6 +14,7 @@ sequence, a shell metacharacter, or a second URL.
 """
 
 import re
+import unicodedata
 from urllib.parse import urlparse
 
 from github_integration.exceptions import InvalidRepositoryURLError
@@ -28,11 +29,36 @@ from github_integration.models import RepositoryReference
 _SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 
 
+def _has_control_character(value: str) -> bool:
+    # Phase 14: found by adversarial testing (tests/security/test_github_security.py)
+    # that CPython's own `urlparse` silently STRIPS \t/\r/\n from a URL
+    # before parsing it (an undocumented-to-most-callers CPython hardening
+    # for header-injection-style bugs), which let a URL containing an
+    # embedded newline through as if the newline had never been there —
+    # e.g. "repo\nevil" silently became the harmless "repoevil". Nothing
+    # downstream was actually reachable through that (the stripped
+    # character never reaches git/HTTP), but a validator whose safety
+    # depends on an undocumented quirk of a library it happens to call is
+    # not trustworthy on inspection — reject control characters explicitly
+    # and up front instead of relying on it.
+    return any(unicodedata.category(ch) == "Cc" for ch in value)
+
+
 def parse_github_url(url: str) -> RepositoryReference:
     if not isinstance(url, str) or not url.strip():
         raise InvalidRepositoryURLError("Repository URL must be a non-empty string.")
 
+    if _has_control_character(url):
+        raise InvalidRepositoryURLError(f"URL contains a control character and was refused: {url!r}")
+
     parsed = urlparse(url.strip())
+
+    if parsed.params:
+        # Phase 14: the legacy "path;params" URL syntax (RFC 2396) would
+        # otherwise let a URL like ".../owner/repo;anything" through with
+        # ";anything" silently discarded rather than the whole URL being
+        # rejected as malformed — found by the same adversarial test.
+        raise InvalidRepositoryURLError(f"URL contains unsupported path parameters and was refused: {url!r}")
 
     if parsed.scheme != "https":
         raise InvalidRepositoryURLError(

@@ -38,7 +38,7 @@ from vectorstore.embeddings.local_provider import DeterministicLocalEmbeddingPro
 from vectorstore.service import IndexingService
 from vectorstore.store import VectorStore
 
-from modification.exceptions import StaleChangeError
+from modification.exceptions import StaleChangeError, UnauthorizedChangeError
 from modification.service import ModificationService
 from rag.llm.stub_provider import StubLLMProvider
 
@@ -74,7 +74,7 @@ def main() -> None:
             print()
 
             print("--- 2. Apply the approved change ---")
-            result = service.apply_change(str(root), proposal)
+            result = service.apply_change(str(root), proposal, approved=True)
             print(result.message)
             print(f"On disk, now: {(root / 'main.py').read_text()!r}")
             print()
@@ -82,11 +82,18 @@ def main() -> None:
             print("--- 3. Safety check: refuse a stale proposal ---")
             (root / "main.py").write_text("def greet():\n    return 'edited concurrently by someone else'\n")
             try:
-                service.apply_change(str(root), proposal)
+                service.apply_change(str(root), proposal, approved=True)
                 print("ERROR: should have refused — this should never print")
             except StaleChangeError as exc:
                 print(f"Correctly refused: {exc}")
             print(f"Concurrent edit survives untouched: {(root / 'main.py').read_text()!r}")
+
+            print("--- 4. Safety check: refuse an unapproved apply (Phase 14) ---")
+            try:
+                service.apply_change(str(root), proposal, approved=False)
+                print("ERROR: should have refused — this should never print")
+            except UnauthorizedChangeError as exc:
+                print(f"Correctly refused: {exc}")
         finally:
             conn = vector_store.connect()
             with conn.cursor() as cur:

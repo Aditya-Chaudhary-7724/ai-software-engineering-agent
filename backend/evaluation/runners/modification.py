@@ -153,7 +153,7 @@ def _evaluate_stale_change_protection(vector_store: VectorStore) -> CaseResult:
 
             stale_change_refused = False
             try:
-                service.apply_change(str(root), proposal)
+                service.apply_change(str(root), proposal, approved=True)
             except StaleChangeError:
                 stale_change_refused = True
 

@@ -6,12 +6,17 @@ FilterConfig) to prune directory traversal; this module then decides,
 file by file, whether a discovered file is relevant.
 
 Policy, in order of precedence:
-1. Filename matches a known generated-artifact glob pattern -> ignored.
-2. Extension matches a known binary extension -> ignored.
-3. File size exceeds the configured limit -> ignored.
-4. Extension is unrecognized: sniff the first KB for a null byte to
+1. Filename matches a known sensitive/credential-file pattern (`.env`,
+   `*.pem`, `id_rsa`, ...) -> ignored (Phase 14 — see
+   `is_sensitive_filename` and docs/security.md). Checked first,
+   deliberately: this reason must never be masked by a coincidental
+   match on a different category.
+2. Filename matches a known generated-artifact glob pattern -> ignored.
+3. Extension matches a known binary extension -> ignored.
+4. File size exceeds the configured limit -> ignored.
+5. Extension is unrecognized: sniff the first KB for a null byte to
    guess whether it is binary -> ignored if so.
-5. Otherwise: relevant.
+6. Otherwise: relevant.
 
 Unknown extensions are never ignored purely for being unknown — only
 after the content sniff suggests binary content. This avoids silently
@@ -62,6 +67,35 @@ DEFAULT_IGNORED_FILE_PATTERNS = (
     "*.swp",
 )
 
+DEFAULT_SENSITIVE_FILE_PATTERNS = (
+    # Phase 14: repository content is untrusted input, and a target
+    # repository may (accidentally or otherwise) contain committed
+    # secrets. Excluding these at ingestion — the earliest point in the
+    # pipeline — means they never reach chunking, embedding, retrieval,
+    # or the LLM prompt, and never get returned by the read_file/
+    # analyze_code tools either (see tools/file_tools.py, which reuses
+    # `is_sensitive_filename` below). Filename-based detection is a
+    # heuristic, not a guarantee — see docs/security.md for what this
+    # does and doesn't cover.
+    ".env",
+    ".env.*",  # deliberately also excludes .env.example's real-looking siblings; see docs/security.md
+    "*.pem",
+    "*.key",
+    "*.pfx",
+    "*.p12",
+    "*.keystore",
+    "*.jks",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "credentials.json",
+    "secrets.json",
+    ".npmrc",
+    ".netrc",
+    "*.kdbx",
+)
+
 DEFAULT_BINARY_EXTENSIONS = frozenset(
     {
         ".png",
@@ -101,6 +135,7 @@ class FilterConfig:
     ignored_dir_names: frozenset[str] = field(default_factory=lambda: DEFAULT_IGNORED_DIR_NAMES)
     ignored_file_patterns: tuple[str, ...] = DEFAULT_IGNORED_FILE_PATTERNS
     binary_extensions: frozenset[str] = field(default_factory=lambda: DEFAULT_BINARY_EXTENSIONS)
+    sensitive_file_patterns: tuple[str, ...] = DEFAULT_SENSITIVE_FILE_PATTERNS
     max_file_size_bytes: int = DEFAULT_MAX_FILE_SIZE_BYTES
 
 
@@ -111,6 +146,17 @@ def is_ignored_directory(dir_name: str, config: FilterConfig) -> bool:
 
 def _matches_ignored_pattern(filename: str, config: FilterConfig) -> bool:
     return any(fnmatch.fnmatch(filename, pattern) for pattern in config.ignored_file_patterns)
+
+
+def is_sensitive_filename(filename: str, config: Optional[FilterConfig] = None) -> bool:
+    """Whether a filename matches a known credential/secret-file
+    pattern (`.env`, `*.pem`, `id_rsa`, ...). Exported so
+    `tools/file_tools.py` can apply the exact same policy to direct
+    file access (`read_file`/`analyze_code`), not just the ingestion
+    scan — see that module for why both paths need it independently.
+    """
+    config = config or FilterConfig()
+    return any(fnmatch.fnmatch(filename, pattern) for pattern in config.sensitive_file_patterns)
 
 
 def _looks_binary_by_content(path: Path, sniff_bytes: int = _SNIFF_BYTES) -> bool:
@@ -133,6 +179,9 @@ def classify_file(
     """
     filename = path.name
     extension = path.suffix.lower()
+
+    if is_sensitive_filename(filename, config):
+        return False, "sensitive_file"
 
     if _matches_ignored_pattern(filename, config):
         return False, "generated_artifact"

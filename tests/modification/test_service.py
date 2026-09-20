@@ -58,7 +58,7 @@ def test_apply_change_writes_proposed_content(tmp_path, vector_store):
 
     service = ModificationService(vector_store, embedding_provider, StubLLMProvider())
     proposal = service.propose_change(str(tmp_path), index_result.repository_id, "fix greet")
-    result = service.apply_change(str(tmp_path), proposal)
+    result = service.apply_change(str(tmp_path), proposal, approved=True)
 
     assert result.applied is True
     assert (tmp_path / "main.py").read_text() == proposal.proposed_content
@@ -75,7 +75,7 @@ def test_apply_change_refuses_stale_proposal(tmp_path, vector_store):
     (tmp_path / "main.py").write_text("def greet():\n    return 'edited by someone else'\n")
 
     with pytest.raises(StaleChangeError):
-        service.apply_change(str(tmp_path), proposal)
+        service.apply_change(str(tmp_path), proposal, approved=True)
 
     # the concurrent edit must survive untouched
     assert (tmp_path / "main.py").read_text() == "def greet():\n    return 'edited by someone else'\n"
@@ -91,4 +91,4 @@ def test_apply_change_rejects_path_traversal(tmp_path, vector_store):
     )
 
     with pytest.raises(ToolAuthorizationError):
-        service.apply_change(str(tmp_path), malicious_proposal)
+        service.apply_change(str(tmp_path), malicious_proposal, approved=True)

@@ -324,7 +324,11 @@ def make_apply_change_node(vector_store: VectorStore, embedding_provider: Embedd
         )
 
         try:
-            result = service.apply_change(state["root_path"], proposal)
+            # `approved=True` is safe here specifically: it's only ever
+            # reached after the `state.get("approved")` check above, which
+            # is itself only ever true after a real LangGraph interrupt
+            # resumed with an explicit human decision — never inferred.
+            result = service.apply_change(state["root_path"], proposal, approved=True)
         except ModificationError as exc:
             # Approved, but nothing was actually written — do not proceed to
             # test verification (route_after_apply reads `applied`, not

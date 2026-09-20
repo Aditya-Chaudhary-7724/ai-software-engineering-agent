@@ -9,6 +9,14 @@ function in this entire project that writes to a repository file, and
 it re-reads the file immediately before writing to detect whether it
 changed since the proposal was generated — refusing rather than
 silently overwriting a stale proposal onto an edited file.
+
+Phase 14: `apply_change` also requires an explicit `approved=True`
+keyword argument, independent of the agent graph's own approval check
+(`agent/nodes.py::apply_change_node` reads `state["approved"]` before
+ever calling this). This is defense in depth, not a redundant check —
+a caller that constructs `ModificationService` directly, bypassing the
+agent graph entirely, must still explicitly assert approval at this
+boundary; there is no path to writing a file without it.
 """
 
 from vectorstore.embeddings.base import EmbeddingProvider
@@ -20,7 +28,7 @@ from tools.security import resolve_safe_path
 
 from modification.change_generator import ChangeGenerator
 from modification.diff import generate_unified_diff
-from modification.exceptions import ModificationError, StaleChangeError
+from modification.exceptions import ModificationError, StaleChangeError, UnauthorizedChangeError
 from modification.file_finder import find_affected_file
 from modification.models import ModificationResult, ProposedChange
 
@@ -54,7 +62,13 @@ class ModificationService:
             diff=diff,
         )
 
-    def apply_change(self, root_path: str, change: ProposedChange) -> ModificationResult:
+    def apply_change(self, root_path: str, change: ProposedChange, *, approved: bool) -> ModificationResult:
+        if not approved:
+            raise UnauthorizedChangeError(
+                "Refusing to apply change: this requires explicit human approval (approved=True), "
+                "never assumed or inferred from repository content, tool output, or an LLM's response."
+            )
+
         path = resolve_safe_path(root_path, change.relative_path)
 
         try:

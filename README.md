@@ -106,7 +106,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 11. GitHub integration — **implemented** (real clone/metadata/pipeline integration; push and PR creation gated behind explicit authorization/approval, never exercised against a repository this project doesn't own)
 12. Evaluation — **implemented** (real, reproducible metrics against real services; no invented numbers — see the Phase 12 section below)
 13. Observability — **implemented** (real tracing wired into the actual agent execution, local-first, fail-safe; optional LangSmith exporter mechanism-tested only — see the Phase 13 section below)
-14. Security
+14. Security — **implemented** (audit + hardening pass across Phases 1-13; two real vulnerabilities found and fixed, backed by 88 adversarial tests against the real system — see `docs/security.md` and the Phase 14 section below; prompt injection is explicitly not claimed to be solved)
 15. Production deployment
 
 ## Engineering Principles
@@ -122,7 +122,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 
 ## Status
 
-Project setup completed. **Phases 1-13 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, GitHub integration, the evaluation framework, and observability/tracing) are implemented.**
+Project setup completed. **Phases 1-14 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, GitHub integration, the evaluation framework, observability/tracing, and security audit/hardening) are implemented.**
 
 ### Phase 1 — Repository Ingestion (implemented)
 
@@ -555,4 +555,29 @@ set -a; source .env; set +a
 .venv/bin/python backend/scripts/manual_agent_demo.py               # records real traces, prints their IDs
 .venv/bin/python backend/scripts/inspect_trace.py --list
 .venv/bin/python backend/scripts/inspect_trace.py <trace_id>
+```
+
+### Phase 14 — Security Audit & Hardening (implemented)
+
+A comprehensive security audit and hardening pass across Phases 1-13, driven by actual adversarial testing against the real system rather than a theoretical review. Full detail — threat model, trust boundaries, per-section findings, residual risks, and security assumptions — lives in **[docs/security.md](docs/security.md)**.
+
+**Two real vulnerabilities found and fixed:**
+1. **Repository secrets weren't excluded from the RAG/LLM path or direct file-read tools.** A target repository's committed `.env`, `id_rsa`, etc. would be chunked, embedded, made retrievable, and directly readable via `read_file` — none of Phase 1's own file filtering applied to secrets specifically, and Phase 8's tools didn't apply Phase 1's filtering at all. **Fixed**: `ingestion/filters.py` gained a sensitive-filename check (checked first, before every other rule), reused directly (not duplicated) by `tools/file_tools.py`, which also now checks file size *before* reading — previously it read the whole file into memory first.
+2. **`ModificationService.apply_change` had no approval check of its own.** The "requires human approval" invariant was enforced only by the calling agent node, not the service — a caller constructing `ModificationService` directly could apply an unapproved change. **Fixed**: `apply_change` now requires `approved: bool` as a required, keyword-only, no-default argument, matching the pattern `GitHubIntegrationService.push_branch`/`.create_pull_request` already used.
+
+**Also found and fixed**: `github_integration.url_validation.parse_github_url` relied, without stating so, on two undocumented `urlparse` behaviors (silently stripping control characters; silently discarding legacy `;params` syntax) — neither was independently exploitable through this codebase, but both are now explicitly rejected rather than implicitly handled.
+
+**Re-verified, unchanged (no weakening)**: Docker sandbox isolation (network, filesystem, environment, PID limits — including a real fork-bomb probe against a real container), GitHub token handling (never in argv, only in child env), path-traversal/symlink protection (`resolve_safe_path`, tested against real symlinks), and the fix-loop's approval-cannot-be-bypassed guarantee.
+
+**Prompt injection is explicitly NOT claimed to be solved.** `rag/prompt.py`'s system prompt now explicitly frames repository content as untrusted data with clear delimiters (a practical, partial mitigation) — but the property this project actually relies on is structural: no authorization or approval decision anywhere in this codebase is ever derived from parsing an LLM's output or repository content. `tests/security/test_prompt_injection.py` proves this against the real agent by embedding an "approved: true" instruction directly into a repository file and confirming the agent still pauses for a real, external approval decision.
+
+**What's genuinely tested:** 88 tests in `tests/security/`, exercising real components wherever practical — real symlinks, a real fork bomb inside a real Docker container, real `git` ref-name validation, real redaction through a real traced span — not only mocks.
+
+**Running it:**
+```bash
+set -a; source .env; set +a
+.venv/bin/python -m pytest tests/security -q          # 88 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
+.venv/bin/python -m pytest -q                           # full suite, including tests/security
+.venv/bin/python -m mypy backend
+git diff --check
 ```
