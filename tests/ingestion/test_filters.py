@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ingestion.filters import FilterConfig, classify_file, is_ignored_directory
+from ingestion.filters import FilterConfig, classify_file, is_ignored_directory, is_sensitive_filename
 
 
 @pytest.mark.parametrize(
@@ -94,3 +94,53 @@ def test_classify_file_does_not_blindly_ignore_unknown_text_extension(tmp_path):
 
     assert is_relevant is True
     assert reason is None
+
+
+# Sensitive-filename matching is case-insensitive (security fix found in
+# frontend phase F1): `fnmatch` is case-sensitive on POSIX, so `.ENV` or
+# `ID_RSA` used to be classified as ordinary files and ingested.
+
+SENSITIVE_CASE_VARIANTS = [
+    ".ENV", ".Env", ".ENV.LOCAL", ".Env.Production", "ID_RSA", "Id_Dsa", "ID_ECDSA", "Id_Ed25519",
+    "Server.PEM", "PRIVATE.KEY", "Cert.PFX", "Bundle.P12", "Release.KEYSTORE", "App.JKS",
+    "Credentials.JSON", "SECRETS.JSON", ".NPMRC", ".NetRC", "Vault.KDBX",
+]
+
+
+@pytest.mark.parametrize("filename", SENSITIVE_CASE_VARIANTS)
+def test_case_variants_of_sensitive_filenames_are_sensitive(filename):
+    assert is_sensitive_filename(filename) is True
+
+
+@pytest.mark.parametrize("filename", SENSITIVE_CASE_VARIANTS)
+def test_classify_file_ignores_case_variant_sensitive_files(tmp_path, filename):
+    file_path = tmp_path / filename
+    file_path.write_text("SECRET=value\n")
+
+    is_relevant, reason = classify_file(file_path, filename, file_path.stat().st_size, FilterConfig())
+
+    assert is_relevant is False
+    assert reason == "sensitive_file"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "Main.PY", "README.MD", "ID_RSA.PUB", "id_rsa.pub", "Environment.py", "env.py", "ENV",
+        "dotenv_loader.py", "Keys.md", "monkey.py", "KeyStore.java", "Pembroke.txt",
+        "Credentials.py", "credentials_test.json", "secrets_manager.py", "NetRC.md",
+    ],
+)
+def test_case_insensitive_matching_does_not_broaden_to_ordinary_files(filename):
+    assert is_sensitive_filename(filename) is False
+
+
+def test_custom_mixed_case_patterns_also_match_case_insensitively():
+    config = FilterConfig(sensitive_file_patterns=("*.Secret", "Deploy_Token.TXT"))
+    assert is_sensitive_filename("a.SECRET", config) is True
+    assert is_sensitive_filename("deploy_token.txt", config) is True
+    assert is_sensitive_filename("deploy_token.md", config) is False
+
+
+def test_an_empty_pattern_list_still_disables_the_check_for_every_case():
+    assert is_sensitive_filename(".ENV", FilterConfig(sensitive_file_patterns=())) is False

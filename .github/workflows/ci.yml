@@ -115,9 +115,11 @@ jobs:
       - name: Build the production backend image
         run: docker build -t ai-swe-agent-backend:ci -f backend/Dockerfile .
 
-      - name: Verify the backend image runs as non-root with no baked-in secrets
+      - name: Verify the backend image runs as non-root, has git, and has no baked-in secrets
         run: |
           docker run --rm ai-swe-agent-backend:ci whoami | grep -qx appuser
+          # F3: the ingestion worker clones with the git CLI.
+          docker run --rm ai-swe-agent-backend:ci git --version
           test -z "$(docker run --rm ai-swe-agent-backend:ci find /app -iname '*.env*')"
 
       - name: Run the production configuration validation script

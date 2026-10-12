@@ -1,0 +1,32 @@
+import { StatusDot } from './ui';
+
+/** One-line, real-data summary of what this deployment can do right now. */
+export default function CapabilityStrip({ result }) {
+  if (!result.ok) {
+    return (
+      <div className="flex items-center gap-2 border-b border-rule bg-err/5 px-6 py-2 text-xs text-err">
+        <StatusDot tone="err" />
+        Backend status unavailable ({result.error})
+      </div>
+    );
+  }
+  const c = result.data;
+  const items = [
+    ['Database', c.database.ok ? 'ok' : 'err', c.database.detail],
+    ['Graph', c.graph.ok ? (c.graph.detail.startsWith('not configured') ? 'idle' : 'ok') : 'err', c.graph.detail],
+    ['LLM', c.llm_provider_configured ? 'ok' : 'warn', c.llm_provider_configured ? 'provider configured' : 'stub (placeholder output)'],
+    ['Embeddings', c.embedding_provider_configured ? 'ok' : 'warn', c.embedding_provider_configured ? 'provider configured' : 'local, non-semantic'],
+    ['Sandbox', c.sandbox_image_available ? 'ok' : 'idle', c.sandbox_image_available ? 'ready' : c.sandbox_docker_available ? 'image not built' : 'Docker unavailable'],
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-rule px-6 py-2 text-xs">
+      {items.map(([name, tone, detail]) => (
+        <span key={name} className="inline-flex items-center gap-2" title={detail}>
+          <StatusDot tone={tone} />
+          <span className="text-ink-muted">{name}</span>
+          <span className="font-mono text-ink-faint">{detail}</span>
+        </span>
+      ))}
+    </div>
+  );
+}

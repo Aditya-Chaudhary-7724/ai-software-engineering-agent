@@ -32,6 +32,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Frontend phase F3: the in-process ingestion worker clones GitHub
+# repositories with the `git` CLI (github_integration/git_operations.py
+# shells out to it — no SDK). Only the `git` package itself:
+# --no-install-recommends skips ssh-client, less, patch, etc. (clones are
+# HTTPS-only by URL validation; ca-certificates already ships in
+# python:3.11-slim). Package lists are removed in the same layer. Git
+# never receives a credential through argv or a file: GITHUB_TOKEN, when
+# configured, reaches only the child process environment.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 

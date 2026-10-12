@@ -22,7 +22,14 @@ class VectorStore:
         register_vector(conn)
         return conn
 
-    def get_or_create_repository(self, conn: psycopg.Connection, name: str, root_path: str) -> int:
+    def get_or_create_repository(
+        self, conn: psycopg.Connection, name: str, root_path: str, *, commit: bool = True
+    ) -> int:
+        """Upserts by `root_path`. The upsert also row-locks the repository
+        until the surrounding transaction ends, which is what serializes
+        concurrent re-indexes of the same repository (see IndexingService).
+        `commit=False` lets a caller make this part of a larger transaction.
+        """
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -34,9 +41,18 @@ class VectorStore:
                 {"name": name, "root_path": root_path},
             )
             row = cur.fetchone()
-        conn.commit()
+        if commit:
+            conn.commit()
         assert row is not None
         return row[0]
+
+    def delete_repository_chunks(self, conn: psycopg.Connection, repository_id: int) -> int:
+        """Deletes every chunk of exactly one repository. Never commits —
+        always used inside a caller's transaction, so the deletion only
+        becomes visible together with the replacement chunks."""
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM code_chunks WHERE repository_id = %(repository_id)s", {"repository_id": repository_id})
+            return cur.rowcount
 
     def insert_chunks(
         self,
@@ -44,6 +60,8 @@ class VectorStore:
         repository_id: int,
         chunks: list[CodeChunk],
         embeddings: list[list[float]],
+        *,
+        commit: bool = True,
     ) -> None:
         if len(chunks) != len(embeddings):
             raise ValueError("chunks and embeddings must have the same length")
@@ -75,7 +93,8 @@ class VectorStore:
                         "embedding": embedding,
                     },
                 )
-        conn.commit()
+        if commit:
+            conn.commit()
 
     def similarity_search(
         self,

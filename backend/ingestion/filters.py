@@ -154,9 +154,16 @@ def is_sensitive_filename(filename: str, config: Optional[FilterConfig] = None) 
     `tools/file_tools.py` can apply the exact same policy to direct
     file access (`read_file`/`analyze_code`), not just the ingestion
     scan — see that module for why both paths need it independently.
+
+    Case-insensitive, on every OS: `fnmatch.fnmatch` is case-sensitive
+    on POSIX but not on Windows, while macOS/Windows filesystems are
+    case-insensitive by default — so `.ENV` or `ID_RSA` must be treated
+    exactly like `.env`/`id_rsa`. Both sides are case-folded and matched
+    with `fnmatchcase`, so the result never depends on the host OS.
     """
     config = config or FilterConfig()
-    return any(fnmatch.fnmatch(filename, pattern) for pattern in config.sensitive_file_patterns)
+    folded = filename.casefold()
+    return any(fnmatch.fnmatchcase(folded, pattern.casefold()) for pattern in config.sensitive_file_patterns)
 
 
 def _looks_binary_by_content(path: Path, sniff_bytes: int = _SNIFF_BYTES) -> bool:

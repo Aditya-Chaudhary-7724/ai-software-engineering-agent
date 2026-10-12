@@ -63,6 +63,7 @@ class GitHubAPIClient:
             clone_url=data["clone_url"],
             private=data["private"],
             stargazers_count=data["stargazers_count"],
+            size_kb=data.get("size") if isinstance(data.get("size"), int) else None,
         )
 
     def create_pull_request(self, owner: str, repo: str, head: str, base: str, title: str, body: str) -> PullRequestResult:

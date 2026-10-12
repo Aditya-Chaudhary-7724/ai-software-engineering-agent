@@ -117,3 +117,68 @@ def test_filter_config_sensitive_patterns_are_configurable_not_hardcoded_globall
     """
     permissive = FilterConfig(sensitive_file_patterns=())
     assert is_sensitive_filename(".env", permissive) is False
+
+
+# --- Case-insensitive matching at ingestion (fix found in frontend phase F1) ---
+# A repository may contain a credential file whose on-disk name differs
+# only in case from a sensitive pattern (`.ENV`, `ID_RSA`, `Server.PEM`).
+# Before the fix, ingestion classified these as ordinary files: they were
+# listed by `list_files` (and so in the API file tree), and any whose
+# category is "source" would be chunked, embedded, and retrievable.
+
+_CASE_VARIANT_SECRETS = {
+    ".ENV": "GITHUB_TOKEN=ghp_casevariant1234567890",
+    "ID_RSA": "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "Server.PEM": "-----BEGIN CERTIFICATE-----",
+    "PRIVATE.KEY": "-----BEGIN PRIVATE KEY-----",
+    "Credentials.JSON": '{"client_secret": "casevariant-secret"}',
+    ".NPMRC": "//registry.npmjs.org/:_authToken=casevariant",
+}
+
+
+def test_ingestion_excludes_case_variant_sensitive_files(tmp_path):
+    for name, content in _CASE_VARIANT_SECRETS.items():
+        (tmp_path / name).write_text(content)
+    (tmp_path / "main.py").write_text("def greet():\n    return 'hi'\n")
+
+    result = IngestionService().ingest(str(tmp_path))
+
+    assert {f.relative_path for f in result.files} == {"main.py"}
+    reasons = {f.relative_path: f.reason for f in result.ignored_files}
+    assert {name: reasons.get(name) for name in _CASE_VARIANT_SECRETS} == {
+        name: "sensitive_file" for name in _CASE_VARIANT_SECRETS
+    }
+
+
+def test_list_files_tool_never_lists_case_variant_sensitive_files(tmp_path):
+    from tools.file_tools import list_files
+    from tools.schemas import ListFilesInput
+
+    for name, content in _CASE_VARIANT_SECRETS.items():
+        (tmp_path / name).write_text(content)
+    (tmp_path / "main.py").write_text("x = 1\n")
+
+    listed = {f.relative_path for f in list_files(ListFilesInput(root_path=str(tmp_path))).files}
+
+    assert listed == {"main.py"}
+
+
+def test_a_case_variant_sensitive_source_file_never_becomes_rag_context(tmp_path):
+    """The indexing path: a SOURCE-category file (which build_chunks WOULD
+    chunk) whose name is a case variant of a configured sensitive
+    pattern must never be chunked. Uses a custom pattern because no
+    default pattern has a source extension — the property under test is
+    the case-insensitive match itself, end to end through chunking."""
+    from parsing.service import ParsingService
+    from vectorstore.chunking import build_chunks
+
+    config = FilterConfig(sensitive_file_patterns=("settings_secret.py",))
+    (tmp_path / "SETTINGS_SECRET.py").write_text("def load():\n    return 'casevariant-hunter2'\n")
+    (tmp_path / "main.py").write_text("def greet():\n    return 'hi'\n")
+
+    ingestion_result = IngestionService(config).ingest(str(tmp_path))
+    parsing_result = ParsingService().parse_repository(str(tmp_path), ingestion_result)
+    chunks = build_chunks(str(tmp_path), ingestion_result, parsing_result)
+
+    assert {chunk.relative_path for chunk in chunks} == {"main.py"}
+    assert all("casevariant-hunter2" not in chunk.content for chunk in chunks)

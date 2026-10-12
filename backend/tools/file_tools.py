@@ -19,6 +19,8 @@ existing `READ_FILE_MAX_CHARS` truncation ever applied to the
 touching file content at all.
 """
 
+from pathlib import Path, PurePosixPath
+
 from ingestion.filters import DEFAULT_MAX_FILE_SIZE_BYTES, is_sensitive_filename
 from ingestion.language import detect_language
 from ingestion.service import IngestionService
@@ -41,12 +43,28 @@ from tools.security import resolve_safe_path
 READ_FILE_MAX_CHARS = 100_000
 
 
-def _reject_sensitive_or_oversized(path, relative_path: str) -> None:
-    if is_sensitive_filename(path.name):
+def _is_sensitive_name(filename: str) -> bool:
+    # `fnmatch` is case-sensitive on POSIX, but macOS (APFS) and Windows
+    # filesystems are case-insensitive by default: `.ENV` opens the real
+    # `.env`. Matching the case-folded name too closes that bypass (the
+    # patterns themselves are all lower-case).
+    return is_sensitive_filename(filename) or is_sensitive_filename(filename.casefold())
+
+
+def _reject_sensitive_name(path: Path, relative_path: str) -> None:
+    """Name-only check — never touches the filesystem, so it runs BEFORE
+    any existence check: the outcome for a sensitive name must not
+    reveal whether that file exists. Checks both the requested name and
+    the resolved name, since a symlink can rename in either direction.
+    """
+    if _is_sensitive_name(PurePosixPath(relative_path).name) or _is_sensitive_name(path.name):
         raise ToolAuthorizationError(
             f"Refusing to access '{relative_path}': filename matches a known sensitive-credential pattern "
             "(see ingestion.filters.DEFAULT_SENSITIVE_FILE_PATTERNS)."
         )
+
+
+def _reject_oversized(path: Path, relative_path: str) -> None:
     size_bytes = path.stat().st_size
     if size_bytes > DEFAULT_MAX_FILE_SIZE_BYTES:
         raise ToolInputError(
@@ -74,13 +92,14 @@ def list_files(input_data: ListFilesInput) -> ListFilesOutput:
 
 def read_file(input_data: ReadFileInput) -> ReadFileOutput:
     path = resolve_safe_path(input_data.root_path, input_data.relative_path)
+    _reject_sensitive_name(path, input_data.relative_path)
 
     if not path.exists():
         raise ToolInputError(f"File not found: {input_data.relative_path}")
     if not path.is_file():
         raise ToolInputError(f"Not a file: {input_data.relative_path}")
 
-    _reject_sensitive_or_oversized(path, input_data.relative_path)
+    _reject_oversized(path, input_data.relative_path)
 
     try:
         content = path.read_text(encoding="utf-8")
@@ -96,11 +115,12 @@ def read_file(input_data: ReadFileInput) -> ReadFileOutput:
 
 def analyze_code(input_data: AnalyzeCodeInput) -> AnalyzeCodeOutput:
     path = resolve_safe_path(input_data.root_path, input_data.relative_path)
+    _reject_sensitive_name(path, input_data.relative_path)
 
     if not path.exists() or not path.is_file():
         raise ToolInputError(f"File not found: {input_data.relative_path}")
 
-    _reject_sensitive_or_oversized(path, input_data.relative_path)
+    _reject_oversized(path, input_data.relative_path)
 
     language = detect_language(path.suffix)
     if language is None:

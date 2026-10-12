@@ -12,6 +12,11 @@ docs/deployment.md for why. Building that surface hastily, under a
 "production deployment" phase whose actual job is infrastructure, risks
 shipping a half-considered API and would go well beyond what was asked.
 
+Frontend phase F1 adds `/api/v1` (api/v1.py): authenticated endpoints
+(capabilities, repositories, files, graph summary, traces). F3 adds
+background ingestion/re-index jobs and starts their in-process worker in
+`lifespan`. Agent execution, approvals, and GitHub push/PR remain unexposed.
+
 Why FastAPI: it's built on Pydantic, already a dependency since Phase 8
 (tool input/output schemas) — this introduces no new validation
 paradigm, just a thin ASGI layer over one already in use. Uvicorn
@@ -22,15 +27,21 @@ production pairing for it — see backend/Dockerfile.
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from jobs.ingestion import DEFAULT_MAX_REPOSITORY_KB, IngestionDependencies, IngestionExecutor
+from jobs.store import JobStore
+from jobs.worker import IngestionWorker
 from observability.logging_config import configure_json_logging
 
+from api.errors import APIError, api_error_handler, validation_error_handler
 from api.health import check_liveness, check_readiness
+from api.v1 import API_V1_PREFIX, build_v1_router
 
 logger = logging.getLogger("api")
 
@@ -44,13 +55,43 @@ logger = logging.getLogger("api")
 _ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 
 
+def _build_ingestion_worker() -> Optional[IngestionWorker]:
+    """F3: one in-process worker per API process, only when ingestion is
+    fully configured. INGESTION_WORKER_ENABLED=false turns it off (e.g. for
+    a process that should only serve reads)."""
+    database_url = os.environ.get("DATABASE_URL")
+    workspace_root = os.environ.get("WORKSPACE_ROOT")
+    if os.environ.get("INGESTION_WORKER_ENABLED", "true").lower() == "false":
+        logger.info("ingestion worker disabled by INGESTION_WORKER_ENABLED")
+        return None
+    if not database_url or not workspace_root or not os.path.isabs(workspace_root):
+        logger.info("ingestion worker not started: DATABASE_URL and an absolute WORKSPACE_ROOT are required")
+        return None
+    max_kb = os.environ.get("INGESTION_MAX_REPOSITORY_KB", "")
+    store = JobStore(database_url)
+    deps = IngestionDependencies(
+        database_url=database_url,
+        workspace_root=workspace_root,
+        max_repository_kb=int(max_kb) if max_kb.isdigit() else DEFAULT_MAX_REPOSITORY_KB,
+    )
+    return IngestionWorker(store, IngestionExecutor(store, deps))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("APP_ENV") == "production":
         configure_json_logging()
     logger.info("application startup", extra={"app_env": os.environ.get("APP_ENV", "development")})
-    yield
-    logger.info("application shutdown")
+    worker = _build_ingestion_worker()
+    app.state.ingestion_worker = worker
+    if worker is not None:
+        worker.start()
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.stop(timeout_seconds=10)
+        logger.info("application shutdown")
 
 
 def create_app() -> FastAPI:
@@ -97,6 +138,23 @@ def create_app() -> FastAPI:
                 ],
             },
         )
+
+    # F1: authenticated, read-only /api/v1 (see api/v1.py). Health
+    # endpoints above stay unauthenticated, exactly as before — an
+    # orchestrator's probes carry no credentials.
+    app.include_router(build_v1_router())
+    app.add_exception_handler(APIError, api_error_handler)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
+
+    @app.middleware("http")
+    async def no_store_for_api_v1(request: Request, call_next):
+        response = await call_next(request)
+        # API responses can carry repository source code: never let a
+        # browser or intermediary cache them.
+        if request.url.path.startswith(API_V1_PREFIX):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

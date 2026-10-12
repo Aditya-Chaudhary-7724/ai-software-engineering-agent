@@ -46,3 +46,37 @@ CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding_hnsw
 -- migration if the search configuration ('english') ever changes.
 CREATE INDEX IF NOT EXISTS idx_code_chunks_content_fts
     ON code_chunks USING gin (to_tsvector('english', content));
+
+-- Frontend phase F3: background jobs (GitHub ingestion / re-index), run by
+-- the API process's in-process worker (backend/jobs/). Postgres is the
+-- queue — no Redis/Celery: claiming uses FOR UPDATE SKIP LOCKED, so several
+-- API processes can each run a worker safely.
+--
+-- `target_path` is the SERVER-RESOLVED repository root a job writes to. It
+-- is never returned by the API. The partial unique index below allows at
+-- most ONE queued/running job per target: duplicate submissions and
+-- concurrent re-indexes of the same repository are rejected atomically by
+-- the database, not by a check-then-insert race in application code.
+CREATE TABLE IF NOT EXISTS jobs (
+    id UUID PRIMARY KEY,
+    job_type TEXT NOT NULL CHECK (job_type IN ('ingest_github', 'reindex')),
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed')),
+    stage TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    github_full_name TEXT,
+    repository_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL,
+    build_graph BOOLEAN NOT NULL DEFAULT FALSE,
+    graph_status TEXT NOT NULL DEFAULT 'not_requested',
+    progress JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_code TEXT,
+    worker_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_jobs_one_active_per_target
+    ON jobs (target_path) WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created_at ON jobs (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_repository_id ON jobs (repository_id);

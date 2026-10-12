@@ -29,6 +29,9 @@ class RepositoryMetadata:
     clone_url: str
     private: bool
     stargazers_count: int
+    # GitHub's reported repository size in KB (approximate). Optional so
+    # existing constructors keep working; used to refuse oversized clones.
+    size_kb: Optional[int] = None
 
 
 @dataclass(frozen=True)

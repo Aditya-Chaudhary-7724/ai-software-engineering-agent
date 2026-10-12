@@ -35,11 +35,20 @@ class IndexingService:
 
         conn = self._vector_store.connect()
         try:
-            apply_schema(conn)
-            repository_id = self._vector_store.get_or_create_repository(
-                conn, ingestion_result.repository.name, ingestion_result.repository.root_path
-            )
-            self._vector_store.insert_chunks(conn, repository_id, chunks, embeddings)
+            apply_schema(conn)  # commits on its own; no transaction is open afterwards
+            # One transaction: upsert the repository row, delete ONLY that
+            # repository's existing chunks, insert the new ones. Readers see
+            # either the complete old index or the complete new one; any
+            # failure rolls everything back (including a brand-new repository
+            # row). The upsert row-locks the repository until commit, so two
+            # concurrent re-indexes of the same repository run one after the
+            # other instead of both inserting a full copy.
+            with conn.transaction():
+                repository_id = self._vector_store.get_or_create_repository(
+                    conn, ingestion_result.repository.name, ingestion_result.repository.root_path, commit=False
+                )
+                self._vector_store.delete_repository_chunks(conn, repository_id)
+                self._vector_store.insert_chunks(conn, repository_id, chunks, embeddings, commit=False)
         finally:
             conn.close()
 

@@ -51,6 +51,8 @@ OPTIONAL_SETTINGS: List[SettingSpec] = [
     SettingSpec("LLM_API_KEY", False, "Anthropic API key (Phase 4) — real LLM answers/modifications; StubLLMProvider is used without it."),
     SettingSpec("EMBEDDING_API_KEY", False, "OpenAI API key (Phase 3) — real semantic embeddings; DeterministicLocalEmbeddingProvider is used without it."),
     SettingSpec("GITHUB_TOKEN", False, "GitHub PAT (Phase 11) — required only for private repos, pushing, or opening PRs; public read-only access works without it."),
+    SettingSpec("API_SERVICE_TOKEN", False, "Bearer token the frontend server uses to call /api/v1 (min 32 chars) — /api/v1 refuses all requests (503) without it; health endpoints are unaffected. Server-only; never exposed to a browser."),
+    SettingSpec("WORKSPACE_ROOT", False, "Absolute path of a DEDICATED directory where GitHub repositories are cloned for ingestion (frontend phase F3) — ingestion over HTTP is disabled without it."),
     SettingSpec("LANGSMITH_API_KEY", False, "Optional LangSmith trace export (Phase 13) — local JSON tracing (JSONFileRecorder) works fully without it."),
 ]
 

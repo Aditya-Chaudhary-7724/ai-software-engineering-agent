@@ -79,6 +79,7 @@ Audited: `frontend/` is an empty directory (checked out from initial project sca
 - `HEALTHCHECK` against `/health/live` (liveness only, matching the liveness/readiness split — an orchestrator's own readiness probe should hit `/health/ready` separately with its own retry policy).
 - `CMD` runs Gunicorn with the Uvicorn worker class, no `--reload`.
 - `.dockerignore` (project root) excludes `.env`/`.git`/`.venv`/`tests`/`docs` from the build context entirely — defense in depth beyond the Dockerfile's own `COPY` instructions never referencing them.
+- **Update (frontend phase F3): `git` added.** Repository ingestion runs in an in-process worker inside the API process, and `github_integration/git_operations.py` clones with the `git` CLI, so the image now installs `git` via `apt-get install --no-install-recommends git` (package lists removed in the same layer). Only git's hard dependencies come with it (Perl, libcurl/GnuTLS, Kerberos/LDAP client libraries) — no `ssh` client, no recommended extras. Cost: image size 502 MB → 647 MB. Verified on the built image: `git version 2.47.3`; still runs as `appuser` (uid 1000); healthcheck and Gunicorn command unchanged; no `.env` files, no Docker CLI, no ssh, no global/system git config. Verified end to end with a real container (`WORKSPACE_ROOT=/app/workspaces`, writable by `appuser`, against the test PostgreSQL via `host.docker.internal`): the worker cloned and indexed `pallets/markupsafe` (124 chunks) and `octocat/Hello-World`; a nonexistent repository failed with `github_repository_not_found`; hostile URLs/extra fields were rejected (422); the clones' git config contains no credentials. Unchanged by this: URL validation (`parse_github_url`), workspace confinement (`resolve_clone_destination`), and the HTTP surface (no push/PR endpoint exists). `GITHUB_TOKEN`, if set, still reaches git only through the child process environment. In production, mount a persistent volume at the `WORKSPACE_ROOT` path, writable by uid 1000.
 
 **Verified locally, this session** (see section 21 for full output):
 ```
@@ -236,7 +237,7 @@ The API itself is stateless in the ordinary HTTP sense (no in-memory session sta
 
 ## 18. Security Considerations
 
-Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicated here. This phase's additions layer on top of it without weakening anything: the application container has no Docker socket, no Docker CLI, and no `git` CLI (verified — it doesn't need them for its current minimal surface); secrets are never baked into the image or the build context (`.dockerignore`); the health/readiness endpoints never leak a connection string or exception detail; CORS defaults to fully closed.
+Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicated here. This phase's additions layer on top of it without weakening anything: the application container has no Docker socket and no Docker CLI (verified); since frontend phase F3 it DOES include the `git` CLI, which the in-process ingestion worker needs to clone repositories (see section 4's "Update (F3)"); secrets are never baked into the image or the build context (`.dockerignore`); the health/readiness endpoints never leak a connection string or exception detail; CORS defaults to fully closed.
 
 ## 19. Known Limitations
 
