@@ -28,6 +28,9 @@ def _not_configured():
 
 @pytest.fixture
 def indexed_repo(app, monkeypatch, vector_store, tmp_path):  # noqa: F811
+    from agent.checkpointing import setup_postgres_checkpointer
+
+    setup_postgres_checkpointer(TEST_DATABASE_URL)  # so the read-only snapshot can count checkpoints
     monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
     for name in ("LLM_API_KEY", "EMBEDDING_API_KEY"):
         monkeypatch.delenv(name, raising=False)
@@ -52,7 +55,8 @@ def _db_snapshot():
     try:
         with conn.cursor() as cur:
             counts = {}
-            for table in ("repositories", "code_chunks", "jobs"):
+            # F6: Ask must also never create an agent task or a checkpoint.
+            for table in ("repositories", "code_chunks", "jobs", "agent_tasks", "checkpoints", "checkpoint_writes"):
                 cur.execute(f"SELECT count(*) FROM {table}")
                 counts[table] = cur.fetchone()[0]
             cur.execute("SELECT relative_path, start_line, end_line FROM code_chunks")

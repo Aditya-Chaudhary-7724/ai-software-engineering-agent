@@ -63,7 +63,9 @@ class ModificationService:
         )
 
     def apply_change(self, root_path: str, change: ProposedChange, *, approved: bool) -> ModificationResult:
-        if not approved:
+        # `is not True`, not `not approved`: a truthy non-boolean (1, "no",
+        # a non-empty dict) must never count as approval (F6 hardening).
+        if approved is not True:
             raise UnauthorizedChangeError(
                 "Refusing to apply change: this requires explicit human approval (approved=True), "
                 "never assumed or inferred from repository content, tool output, or an LLM's response."

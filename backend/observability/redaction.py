@@ -80,12 +80,18 @@ def _is_sensitive_key(key: str) -> bool:
     return any(token in _SENSITIVE_KEY_TOKENS for token in tokens)
 
 
+def redact_secrets(value: str) -> str:
+    """Value-based secret redaction only, no length bound (F6: agent task
+    output is shown in full, unlike span attributes)."""
+    for pattern in _SECRET_VALUE_PATTERNS:
+        value = pattern.sub(REDACTED_MARKER, value)
+    return value
+
+
 def redact_text(value: str) -> str:
     """Value-based secret redaction plus length bounding for one string."""
     try:
-        redacted = value
-        for pattern in _SECRET_VALUE_PATTERNS:
-            redacted = pattern.sub(REDACTED_MARKER, redacted)
+        redacted = redact_secrets(value)
         if len(redacted) > _MAX_STRING_LENGTH:
             omitted = len(value) - _MAX_STRING_LENGTH
             redacted = redacted[:_MAX_STRING_LENGTH] + f"... [truncated, {omitted} more characters]"

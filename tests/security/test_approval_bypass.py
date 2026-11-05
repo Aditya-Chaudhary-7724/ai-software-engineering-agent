@@ -159,10 +159,10 @@ def test_rejecting_a_fix_loop_retry_stops_the_agent_immediately_no_further_chang
 
         result = service.run("Fix the greet function", index_result.repository_id, root_path, thread_id)
         assert result.status == "awaiting_approval"
-        result = service.resume(thread_id, approved=True)  # approve the original change
+        result = service.resume(thread_id, approved=True, **result.approval_binding())  # approve the original change
         assert result.status == "awaiting_approval"  # now paused on the fix attempt
 
-        result = service.resume(thread_id, approved=False)  # REJECT the fix
+        result = service.resume(thread_id, approved=False, **result.approval_binding())  # REJECT the fix
 
         assert result.status == "completed"
         assert "not approved" in result.final_response

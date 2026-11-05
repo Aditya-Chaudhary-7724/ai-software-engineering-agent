@@ -160,13 +160,13 @@ def main() -> None:
             run_and_print("2. Test (Phase 10 sandbox)", "Run the tests", index_result.repository_id, root_path, str(uuid.uuid4()))
 
             modify_thread = str(uuid.uuid4())
-            run_and_print(
+            paused = run_and_print(
                 "3. Modify (awaiting approval)", "Fix the login bug", index_result.repository_id, root_path,
                 modify_thread,
             )
 
             print("--- 3b. Resuming with human approval = True (no test files in this repo) ---")
-            resumed = service.resume(thread_id=modify_thread, approved=True)
+            resumed = service.resume(thread_id=modify_thread, approved=True, **paused.approval_binding())
             for entry in resumed.execution_log[-2:]:
                 print(f"  [log] {entry}")
             print(f"  -> Response: {resumed.final_response}")
@@ -185,7 +185,7 @@ def main() -> None:
             while loop_result.status == "awaiting_approval":
                 round_num += 1
                 print(f"--- 4.{round_num} Resuming with human approval = True ---")
-                loop_result = service.resume(thread_id=loop_thread, approved=True)
+                loop_result = service.resume(thread_id=loop_thread, approved=True, **loop_result.approval_binding())
                 for entry in loop_result.execution_log[seen_log_entries:]:
                     print(f"  [log] {entry}")
                 seen_log_entries = len(loop_result.execution_log)

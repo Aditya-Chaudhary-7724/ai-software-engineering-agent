@@ -18,18 +18,16 @@ from sandbox.models import PYTHON_SANDBOX_IMAGE
 
 router = APIRouter(tags=["capabilities"])
 
-# Operations exposed by THIS API version. Agent execution, approvals,
-# test runs and evaluation runs arrive in later phases; GitHub push/PR is
-# excluded entirely. `repository_ingestion` is computed per request: it is
-# true only while this process's ingestion worker is running.
+# Operations exposed by THIS API version. Standalone test runs and
+# evaluation runs arrive in later phases; GitHub push/PR is excluded
+# entirely. `repository_ingestion`, `agent_execution` and `approvals` are
+# computed per request: true only while this process's worker for them runs.
 FEATURES = {
     "repository_browsing": True,
     "file_browsing": True,
     "graph_summary": True,
     "trace_viewing": True,
     "ask": True,
-    "agent_execution": False,
-    "approvals": False,
     "test_execution": False,
     "evaluation_runs": False,
     "github_push_and_pull_requests": False,
@@ -46,8 +44,8 @@ def _sandbox_image_available() -> bool:
         return False
 
 
-def _ingestion_worker_running(request: Request) -> bool:
-    worker = getattr(request.app.state, "ingestion_worker", None)
+def _worker_running(request: Request, attribute: str) -> bool:
+    worker = getattr(request.app.state, attribute, None)
     return bool(worker is not None and worker.is_running)
 
 
@@ -64,5 +62,10 @@ def get_capabilities(request: Request) -> Capabilities:
         github_token_configured=bool(os.environ.get("GITHUB_TOKEN")),
         sandbox_docker_available=docker_ok,
         sandbox_image_available=docker_ok and _sandbox_image_available(),
-        features={**FEATURES, "repository_ingestion": _ingestion_worker_running(request)},
+        features={
+            **FEATURES,
+            "repository_ingestion": _worker_running(request, "ingestion_worker"),
+            "agent_execution": _worker_running(request, "agent_worker"),
+            "approvals": _worker_running(request, "agent_worker"),
+        },
     )

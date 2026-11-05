@@ -37,6 +37,7 @@ from sandbox.base import TestRunner
 from sandbox.exceptions import DockerUnavailableError, NoTestCommandError
 from sandbox.models import TestRunResult
 
+from agent.approval import diff_sha256, is_bound_approval
 from agent.classification import classify_task
 from agent.state import DEFAULT_FINAL_TOP_K, MAX_FIX_ITERATIONS, MAX_LOOP_SECONDS, MAX_RETRIES, AgentState
 
@@ -280,6 +281,7 @@ def human_approval_node(state: AgentState) -> dict:
     # (see run_tests_after_apply_node) — shown here so the reviewer approves
     # what will actually be generated, not the original request.
     is_fix_attempt = state["fix_iteration"] > 0
+    expected_hash = diff_sha256(state["proposed_diff"])
     decision = interrupt(
         {
             "message": (
@@ -292,15 +294,38 @@ def human_approval_node(state: AgentState) -> dict:
             "instruction": state["modification_instruction"] or state["question"],
             "relative_path": state["proposed_relative_path"],
             "diff": state["proposed_diff"],
+            "diff_sha256": expected_hash,
+            "fix_iteration": state["fix_iteration"],
         }
     )
-    approved = bool(decision)
-    return {"approved": approved, "execution_log": [f"Human approval: {'approved' if approved else 'rejected'}."]}
+    # F6: strict and bound to this exact diff (agent/approval.py). Never
+    # `bool(decision)` — that made "no", 1 and [0] count as approval.
+    approved = is_bound_approval(decision, expected_hash)
+    if approved:
+        log = "Human approval: approved."
+    elif isinstance(decision, dict) and decision.get("approved") is True:
+        log = "Human approval: approval did not match the proposed diff; treated as rejected."
+    else:
+        log = "Human approval: rejected."
+    return {"approved": approved, "execution_log": [log]}
 
 
 def make_apply_change_node(vector_store: VectorStore, embedding_provider: EmbeddingProvider, llm_provider: LLMProvider):
     def apply_change_node(state: AgentState) -> dict:
-        if not state.get("approved"):
+        if state.get("approved") is not True:
+            if state["fix_iteration"] > 0:
+                # The ORIGINAL change was approved and applied earlier in this
+                # thread; only the fix attempt is being declined.
+                return {
+                    "applied": False,
+                    "final_response": (
+                        f"Fix attempt {state['fix_iteration']} was not approved by a human reviewer and was not "
+                        f"applied. The previously approved change to '{state['proposed_relative_path']}' remains "
+                        "applied, and its tests were failing."
+                    ),
+                    "sources": [],
+                    "execution_log": ["Fix attempt rejected; it was not applied."],
+                }
             return {
                 "applied": False,
                 "final_response": "Modification request was not approved by a human reviewer. No changes were made.",

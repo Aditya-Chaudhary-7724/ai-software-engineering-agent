@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
+from agent.checkpointing import setup_postgres_checkpointer
 from vectorstore.migrations import apply_schema
 from vectorstore.store import VectorStore
 
@@ -48,6 +49,9 @@ def main() -> None:
         print("Schema applied (idempotent — CREATE ... IF NOT EXISTS only, nothing destructive).")
     finally:
         conn.close()
+    # F6: LangGraph's own checkpoint tables (durable human-approval state).
+    setup_postgres_checkpointer(database_url)
+    print("LangGraph checkpoint tables applied (idempotent, library-managed migrations).")
 
 
 if __name__ == "__main__":

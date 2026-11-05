@@ -9,13 +9,13 @@ const AVAILABLE = [
   { href: '/repositories', label: 'Repositories', icon: Boxes },
   { href: '/ask', label: 'Ask', icon: MessageSquareText },
   { href: '/graph', label: 'Knowledge graph', icon: Network },
+  { href: '/tasks', label: 'Agent tasks', icon: GitPullRequestArrow },
   { href: '/traces', label: 'Agent traces', icon: Route },
 ];
 
 // Shown so the workspace's scope is honest, but not linked: these screens
 // need backend endpoints that later phases add.
 const PLANNED = [
-  { label: 'Changes & approval', phase: 'F6', icon: GitPullRequestArrow },
   { label: 'Tests & evaluation', phase: 'F7', icon: FlaskConical },
 ];
 

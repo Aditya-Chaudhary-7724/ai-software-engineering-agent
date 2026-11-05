@@ -70,7 +70,7 @@ def _run_to_completion(service: AgentService, repository_id: int, root_path: str
     approvals = 0
     while result.status == "awaiting_approval" and approvals < max_rounds:
         approvals += 1
-        result = service.resume(thread_id=thread_id, approved=True)
+        result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())
     return result, approvals, thread_id
 
 
@@ -202,10 +202,10 @@ def _evaluate_approval_cannot_be_bypassed(service_factory, index_result, root_pa
     result = service.run(_MODIFY_QUESTION, index_result.repository_id, root_path, thread_id)
     first_approval_gate = result.status == "awaiting_approval"
 
-    result = service.resume(thread_id=thread_id, approved=True)  # approve the original change
+    result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())  # approve the original change
     second_approval_gate = result.status == "awaiting_approval"  # now paused on the fix attempt
 
-    result = service.resume(thread_id=thread_id, approved=False)  # reject the fix attempt
+    result = service.resume(thread_id=thread_id, approved=False, **result.approval_binding())  # reject the fix attempt
     stopped_immediately = result.status == "completed" and "not approved" in (result.final_response or "")
     fix_tests_never_ran = test_runner.call_count == 1  # only the original apply's test run happened
 

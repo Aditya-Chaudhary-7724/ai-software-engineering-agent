@@ -195,6 +195,18 @@ Covered in detail in section 11 and `docs/architecture.md`'s "Observability" sec
 
 **Not implemented:** a cap on the total number or disk size of trace files `JSONFileRecorder` accumulates under `.observability/traces/` over a long-running process's lifetime. This project is a local development tool, not a long-running production service, so no rotation/eviction policy was added speculatively — noted here as a real gap for anyone deploying this beyond that context, not silently ignored.
 
+## 13a. Human Approval Binding (frontend phase F6)
+
+**Status: IMPLEMENTED and regression-tested.** Finding fixed: `human_approval_node` used `approved = bool(decision)`, so `"no"`, `1` or `[0]` counted as approval, and `ModificationService.apply_change` checked `if not approved` (so `approved=1` wrote the file). Now:
+
+1. HTTP: `approved` is `StrictBool` (JSON `true`/`false` only); the Next.js route also requires `typeof === 'boolean'`. The body must carry the pending `interrupt_id` and the SHA-256 of the diff; the browser computes that hash itself over the diff it rendered.
+2. Database gate: one conditional UPDATE — status `awaiting_approval`, same interrupt id, same hash, unexpired — consumes the approval. Exactly one of N concurrent/replayed decisions can match.
+3. Service: `AgentService.resume(thread_id, approved, *, interrupt_id, diff_sha256)` refuses non-`bool` values, unknown/stale interrupt ids and a hash that does not match the hash it recomputes from the checkpointed diff, before touching the graph (the approval stays pending). LangGraph 0.6.11 silently ignores a resume for a stale interrupt id, so this check cannot be left to the library.
+4. Node: `human_approval_node` treats anything other than `{"approved": True, "diff_sha256": <matching>}` as rejection — so even a caller driving the compiled graph directly with `Command(resume=True)` cannot apply a change.
+5. File write: `apply_change` requires `approved is True`.
+
+Checkpoint data is persisted in PostgreSQL with a msgpack-only serializer: LangGraph's default `JsonPlusSerializer` falls back to JSON for strings msgpack rejects and revives `{"lc": 2, "type": "constructor"}` objects by importing and calling arbitrary attributes on load; `SafeCheckpointSerializer` refuses to write or read the JSON/pickle encodings. Checkpoints (which contain full file content and test output) are deleted when a task becomes terminal. The diff shown for approval is never rewritten by redaction — the hash binds the exact bytes that will be written. Tests: `tests/agent_tasks/`, `tests/api/test_v1_agent_tasks.py`, `frontend/tests/agent-task*.test.js`.
+
 ## 14. Known Limitations
 
 - **Filename-based secret detection only** — a secret embedded in ordinary file content is not detected (section 4, 11).

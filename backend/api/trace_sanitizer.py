@@ -34,11 +34,15 @@ SERVER_PATH_KEYS = frozenset({"root_path", "local_path", "repository_path", "wor
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w.~:/\\-])/[^\s'\"`]+")
 
 
-def scrub_text(value: str, known_roots: List[str]) -> str:
+def scrub_paths(value: str, known_roots: List[str]) -> str:
+    """Steps 2-3 only (F6 reuses this for agent task output)."""
     for root in known_roots:
         value = value.replace(root.rstrip("/") + "/", "").replace(root, REPOSITORY_ROOT_PLACEHOLDER)
-    value = _ABSOLUTE_PATH_PATTERN.sub(SERVER_PATH_PLACEHOLDER, value)
-    return redact_text(value)
+    return _ABSOLUTE_PATH_PATTERN.sub(SERVER_PATH_PLACEHOLDER, value)
+
+
+def scrub_text(value: str, known_roots: List[str]) -> str:
+    return redact_text(scrub_paths(value, known_roots))
 
 
 def _scrub_value(value: Any, known_roots: List[str]) -> Any:

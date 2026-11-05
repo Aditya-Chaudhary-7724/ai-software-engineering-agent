@@ -9,11 +9,29 @@ browser never sees.
 Browser ──(HttpOnly session cookie, same origin)──▶ Next.js server ──(Bearer API_SERVICE_TOKEN)──▶ FastAPI /api/v1
 ```
 
-**Status (F5):** single-operator login, protected shell, dashboard,
+**Status (F6):** single-operator login, protected shell, dashboard,
 repositories (add a GitHub repository by URL, live job progress, re-index),
-file explorer, Ask (read-only Q&A with citations), knowledge graph, agent-trace
-viewer. Agent tasks/approval and tests/evaluation are later phases and appear
-in the navigation as disabled.
+file explorer, Ask (read-only Q&A with citations), knowledge graph, agent
+tasks with diff review and explicit approval, agent-trace viewer.
+Tests/evaluation (F7) appears in the navigation as disabled.
+
+## Agent tasks (F6)
+
+- `/tasks` — task form: pick a repository, write an instruction, **Check
+  route** (the backend's own classifier: `answer` / `modify`; `test` is not
+  available until F7), then **Run task**. Recent tasks are listed below.
+- `/tasks/<id>` — polls status while queued/running; shows the safe execution
+  log, the outcome ("Proposed — NOT applied" vs "Applied"), the proposed
+  unified diff (plain text, untrusted), and Approve / Reject. Approve needs a
+  second confirmation click.
+- Approve/Reject are enabled only while the task awaits approval, the
+  proposal is pending and unexpired, and the SHA-256 the browser computes over
+  the displayed diff equals the server's hash. The decision sends that hash,
+  the interrupt id and a JSON boolean; the backend re-verifies all of it and
+  accepts a decision once.
+- Approving writes one file in the server checkout. Nothing is committed,
+  pushed, or sent to GitHub. Without `LLM_API_KEY` the proposed content is stub
+  placeholder text (labelled in the UI).
 
 ## Knowledge graph (F5)
 

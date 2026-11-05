@@ -42,7 +42,6 @@ Retries are bounded structurally in two independent loops:
 from typing import Optional
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from graph.client import Neo4jClient
@@ -57,6 +56,7 @@ from observability.node_tracing import traced_node
 from observability.recorder import NullRecorder
 from observability.tracer import Tracer
 
+from agent.checkpointing import memory_checkpointer
 from agent.nodes import (
     code_analyzer_node,
     decision_node,
@@ -216,4 +216,4 @@ def build_agent_graph(
     workflow.add_edge("answer", END)
     workflow.add_edge("test", END)
 
-    return workflow.compile(checkpointer=checkpointer or MemorySaver())
+    return workflow.compile(checkpointer=checkpointer or memory_checkpointer())

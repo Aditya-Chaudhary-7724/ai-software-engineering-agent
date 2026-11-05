@@ -98,7 +98,7 @@ def test_a_modify_run_pauses_the_trace_at_human_approval(tmp_path, vector_store,
     assert approval_span.status == "interrupted"
 
     # Resuming continues the SAME trace, not a new one.
-    resumed = service.resume(thread_id, approved=True)
+    resumed = service.resume(thread_id, approved=True, **result.approval_binding())
     assert resumed.status == "completed"
     trace_after_resume = recorder.get_trace(thread_id)
     assert trace_after_resume.status == "completed"

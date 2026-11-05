@@ -15,7 +15,9 @@ shipping a half-considered API and would go well beyond what was asked.
 Frontend phase F1 adds `/api/v1` (api/v1.py): authenticated endpoints
 (capabilities, repositories, files, graph summary, traces). F3 adds
 background ingestion/re-index jobs and starts their in-process worker in
-`lifespan`. Agent execution, approvals, and GitHub push/PR remain unexposed.
+`lifespan`. F6 adds agent tasks with bound human approval and a second
+in-process worker for them (durable approvals via PostgreSQL checkpoints).
+Standalone test runs and GitHub push/PR remain unexposed.
 
 Why FastAPI: it's built on Pydantic, already a dependency since Phase 8
 (tool input/output schemas) — this introduces no new validation
@@ -34,9 +36,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from agent_tasks.executor import AgentTaskDependencies, AgentTaskExecutor
+from agent_tasks.models import DEFAULT_APPROVAL_TTL_SECONDS
+from agent_tasks.store import AgentTaskStore
 from jobs.ingestion import DEFAULT_MAX_REPOSITORY_KB, IngestionDependencies, IngestionExecutor
 from jobs.store import JobStore
-from jobs.worker import IngestionWorker
+from jobs.worker import BackgroundWorker, IngestionWorker
 from observability.logging_config import configure_json_logging
 
 from api.errors import APIError, api_error_handler, validation_error_handler
@@ -77,20 +82,48 @@ def _build_ingestion_worker() -> Optional[IngestionWorker]:
     return IngestionWorker(store, IngestionExecutor(store, deps))
 
 
+def _build_agent_worker() -> Optional[BackgroundWorker]:
+    """F6: the agent-task worker. Agent tasks take minutes (LLM calls,
+    sandboxed test runs), so they never run inside an HTTP request.
+    AGENT_WORKER_ENABLED=false turns it off; AGENT_APPROVAL_TTL_SECONDS
+    bounds how long a proposed change may wait for a decision."""
+    database_url = os.environ.get("DATABASE_URL")
+    if os.environ.get("AGENT_WORKER_ENABLED", "true").lower() == "false":
+        logger.info("agent worker disabled by AGENT_WORKER_ENABLED")
+        return None
+    if not database_url:
+        logger.info("agent worker not started: DATABASE_URL is required")
+        return None
+    ttl = os.environ.get("AGENT_APPROVAL_TTL_SECONDS", "")
+    deps = AgentTaskDependencies(
+        database_url=database_url,
+        approval_ttl_seconds=int(ttl) if ttl.isdigit() and int(ttl) > 0 else DEFAULT_APPROVAL_TTL_SECONDS,
+    )
+    store = AgentTaskStore(database_url)
+    executor = AgentTaskExecutor(store, deps)
+    # A task can legitimately run for minutes (sandboxed tests: up to the
+    # testing loop's 300 s budget), so "stale" must be well past one
+    # heartbeat interval, not past one task duration — heartbeats continue
+    # for the whole run.
+    return BackgroundWorker(store, executor, name="agent", recover=executor.recover_stale)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("APP_ENV") == "production":
         configure_json_logging()
     logger.info("application startup", extra={"app_env": os.environ.get("APP_ENV", "development")})
-    worker = _build_ingestion_worker()
-    app.state.ingestion_worker = worker
-    if worker is not None:
-        worker.start()
+    workers = {"ingestion_worker": _build_ingestion_worker(), "agent_worker": _build_agent_worker()}
+    for attribute, worker in workers.items():
+        setattr(app.state, attribute, worker)
+        if worker is not None:
+            worker.start()
     try:
         yield
     finally:
-        if worker is not None:
-            worker.stop(timeout_seconds=10)
+        for worker in workers.values():
+            if worker is not None:
+                worker.stop(timeout_seconds=10)
         logger.info("application shutdown")
 
 

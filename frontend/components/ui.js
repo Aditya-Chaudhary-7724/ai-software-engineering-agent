@@ -39,6 +39,9 @@ const TONES = {
   error: 'bg-err',
   failed: 'bg-err',
   running: 'bg-accent',
+  queued: 'bg-idle',
+  rejected: 'bg-idle',
+  expired: 'bg-warn',
   idle: 'bg-idle',
 };
 

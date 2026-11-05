@@ -102,13 +102,13 @@ def test_modify_task_rejected_makes_no_changes(tmp_path, vector_store, neo4j_cli
     thread_id = str(uuid.uuid4())
 
     service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), no_op_test_runner)
-    service.run(
+    result = service.run(
         "Fix the greet function",
         repository_id=index_result.repository_id,
         root_path=str(tmp_path.resolve()),
         thread_id=thread_id,
     )
-    result = service.resume(thread_id=thread_id, approved=False)
+    result = service.resume(thread_id=thread_id, approved=False, **result.approval_binding())
 
     assert result.status == "completed"
     assert "not approved" in result.final_response
@@ -137,13 +137,13 @@ def test_modify_task_approved_applies_the_change(tmp_path, vector_store, neo4j_c
     thread_id = str(uuid.uuid4())
 
     service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), no_op_test_runner)
-    service.run(
+    result = service.run(
         "Fix the greet function",
         repository_id=index_result.repository_id,
         root_path=str(tmp_path.resolve()),
         thread_id=thread_id,
     )
-    result = service.resume(thread_id=thread_id, approved=True)
+    result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())
 
     assert result.status == "completed"
     assert "Applied approved change" in result.final_response

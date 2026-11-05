@@ -87,14 +87,14 @@ def _evaluate_approval_and_single_file_scope(vector_store: VectorStore, neo4j_cl
                 and paused.interrupt_message["relative_path"] == "greet.py"
             )
 
-            rejected = service.resume(thread_id=reject_thread, approved=False)
+            rejected = service.resume(thread_id=reject_thread, approved=False, **paused.approval_binding())
             rejection_prevents_write = (
                 rejected.status == "completed" and (root / "greet.py").read_text() == original_content
             )
 
             approve_thread = str(uuid.uuid4())
-            service.run("Fix the greet function", index_result.repository_id, root_path, approve_thread)
-            approved = service.resume(thread_id=approve_thread, approved=True)
+            paused = service.run("Fix the greet function", index_result.repository_id, root_path, approve_thread)
+            approved = service.resume(thread_id=approve_thread, approved=True, **paused.approval_binding())
             new_content = (root / "greet.py").read_text()
             correct_file_modified = new_content != original_content
             # Only ever one file exists in this repository, so "touches
@@ -228,7 +228,7 @@ def _evaluate_failed_change_not_silently_accepted(vector_store: VectorStore, neo
             approvals = 0
             while result.status == "awaiting_approval" and approvals <= MAX_FIX_ITERATIONS + 1:
                 approvals += 1
-                result = service.resume(thread_id=thread_id, approved=True)
+                result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())
 
             final_response = result.final_response or ""
             never_falsely_reports_passed = "Tests: passed" not in final_response

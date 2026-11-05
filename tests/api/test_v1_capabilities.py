@@ -40,8 +40,22 @@ def test_capabilities_report_exposed_operations(api_client):
         assert features[read_only] is True
     assert features["repository_ingestion"] is False
     assert features["ask"] is True  # F4: read-only Q&A
-    for not_exposed in ("agent_execution", "approvals", "test_execution", "evaluation_runs", "github_push_and_pull_requests"):
+    # F6: agent tasks/approvals exist, but are reported available only while
+    # the agent worker runs — never assumed.
+    for worker_dependent in ("agent_execution", "approvals"):
+        assert features[worker_dependent] is False
+    for not_exposed in ("test_execution", "evaluation_runs", "github_push_and_pull_requests"):
         assert features[not_exposed] is False
+
+
+def test_agent_features_follow_the_agent_worker(app, api_client):
+    class RunningWorker:
+        is_running = True
+
+    app.state.agent_worker = RunningWorker()
+    features = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()["features"]
+    assert features["agent_execution"] is True and features["approvals"] is True
+    assert features["github_push_and_pull_requests"] is False
 
 
 # F3: the ONLY state-changing routes under /api/v1. Adding another one must
@@ -49,11 +63,16 @@ def test_capabilities_report_exposed_operations(api_client):
 ALLOWED_WRITE_ROUTES = {
     ("POST", "/api/v1/ingestion-jobs"),
     ("POST", "/api/v1/repositories/{repository_id}/reindex"),
+    # F6: enqueue an agent task; record ONE bound approval decision.
+    ("POST", "/api/v1/repositories/{repository_id}/agent-tasks"),
+    ("POST", "/api/v1/agent-tasks/{task_id}/decision"),
 }
 # F4: POST only so the question travels in the body, not URLs/logs. Proven
 # read-only by tests/api/test_v1_ask.py::test_ask_is_strictly_read_only.
 READ_ONLY_POST_ROUTES = {
     ("POST", "/api/v1/repositories/{repository_id}/ask"),
+    # F6: pure classification of the instruction text; touches nothing.
+    ("POST", "/api/v1/agent-tasks/route-preview"),
 }
 
 
@@ -65,9 +84,22 @@ def test_only_the_allowlisted_routes_use_non_get_methods(app):
     assert non_get == ALLOWED_WRITE_ROUTES | READ_ONLY_POST_ROUTES
 
 
-def test_no_agent_approval_or_github_write_routes_exist(app):
+# F6 deliberately adds agent-task and approval routes (allowlisted above);
+# these are exactly the agent-related paths that may exist.
+AGENT_ROUTE_PATHS = {
+    "/api/v1/agent-tasks",
+    "/api/v1/agent-tasks/route-preview",
+    "/api/v1/agent-tasks/{task_id}",
+    "/api/v1/agent-tasks/{task_id}/decision",
+    "/api/v1/repositories/{repository_id}/agent-tasks",
+}
+
+
+def test_no_github_write_or_unlisted_agent_routes_exist(app):
     from fastapi.routing import APIRoute
 
     for route in [r for r in app.routes if isinstance(r, APIRoute) and r.path.startswith(API_V1_PREFIX)]:
-        for forbidden in ("agent", "approv", "resume", "push", "pull", "evaluat", "sandbox", "/run"):
+        for forbidden in ("resume", "push", "pull", "evaluat", "sandbox", "/run", "approv", "commit", "merge"):
             assert forbidden not in route.path, route.path
+        if "agent" in route.path or "decision" in route.path:
+            assert route.path in AGENT_ROUTE_PATHS, route.path

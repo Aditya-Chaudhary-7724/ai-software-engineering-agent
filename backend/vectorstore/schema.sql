@@ -80,3 +80,59 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_jobs_one_active_per_target
     ON jobs (target_path) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created_at ON jobs (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_repository_id ON jobs (repository_id);
+
+-- Frontend phase F6: agent tasks (explicit Task workflow, separate from the
+-- read-only Ask) and their human-approval state. Run by a second instance
+-- of the same in-process worker loop as `jobs` (backend/agent_tasks/).
+-- The agent's own LangGraph state lives in LangGraph's checkpoint tables
+-- (created by PostgresSaver.setup(), see backend/agent/checkpointing.py);
+-- this table is the queue, the approval gate, and the safe client view.
+--
+-- Approval gate: a decision is accepted only by ONE conditional UPDATE that
+-- requires status = 'awaiting_approval', the pending interrupt id, the
+-- pending diff hash, and an unexpired approval window — so a stale, changed,
+-- reused, expired or concurrent second decision matches zero rows.
+--
+-- `target_path` is the server-resolved repository root and is never
+-- returned by the API. One ACTIVE task per repository (partial unique
+-- index): two agent tasks can never change the same checkout concurrently.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id UUID PRIMARY KEY,
+    repository_id BIGINT NOT NULL,
+    target_path TEXT NOT NULL,
+    instruction TEXT NOT NULL,
+    route TEXT NOT NULL CHECK (route IN ('answer', 'modify')),
+    status TEXT NOT NULL CHECK (status IN (
+        'queued', 'running', 'awaiting_approval', 'completed', 'rejected', 'failed', 'expired', 'interrupted'
+    )),
+    -- What the worker does when it claims a queued task: start the graph, or
+    -- resume it with the decision recorded below.
+    action TEXT NOT NULL DEFAULT 'start' CHECK (action IN ('start', 'resume')),
+    decision_approved BOOLEAN,
+    decided_at TIMESTAMPTZ,
+    approvals_granted INTEGER NOT NULL DEFAULT 0,
+    -- The most recent proposal (pending while status = 'awaiting_approval').
+    proposal_interrupt_id TEXT,
+    proposal_diff TEXT,
+    proposal_diff_sha256 TEXT,
+    proposal_relative_path TEXT,
+    proposal_message TEXT,
+    proposal_fix_iteration INTEGER,
+    approval_expires_at TIMESTAMPTZ,
+    execution_log JSONB NOT NULL DEFAULT '[]'::jsonb,
+    final_response TEXT,
+    sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+    outcome JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_code TEXT,
+    worker_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_agent_tasks_one_active_per_repository
+    ON agent_tasks (repository_id) WHERE status IN ('queued', 'running', 'awaiting_approval');
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_created_at ON agent_tasks (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_repository_id ON agent_tasks (repository_id);

@@ -21,7 +21,12 @@ from api.v1 import API_V1_PREFIX
 
 from tests.api.conftest import TEST_SERVICE_TOKEN, auth_headers
 
-_PLACEHOLDER_PATH_PARAMS = {"repository_id": "1", "trace_id": str(uuid.uuid4()), "job_id": str(uuid.uuid4())}
+_PLACEHOLDER_PATH_PARAMS = {
+    "repository_id": "1",
+    "trace_id": str(uuid.uuid4()),
+    "job_id": str(uuid.uuid4()),
+    "task_id": str(uuid.uuid4()),  # F6
+}
 
 
 def _v1_routes(application):

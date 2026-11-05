@@ -36,7 +36,7 @@ Repository
 
 ## Planned Capabilities
 
-All capabilities below are **planned**, not implemented. See [Status](#status).
+This list was the original plan. Most of it is now implemented, with honest limits (no real LLM/embedding provider is configured by default) — see [Status](#status) for exactly what exists and how it was tested.
 
 - Ingest GitHub repositories
 - Understand repository structure
@@ -87,7 +87,7 @@ High-level, planned architecture:
         Repository / Database / Sandbox
 ```
 
-No component in this diagram is implemented yet. This represents the target architecture the project is being built toward, incrementally.
+This was the target architecture. Every box now exists in some form — the frontend is the Engineering Lab (`frontend/`, a Next.js backend-for-frontend), the Backend API is FastAPI `/api/v1` — see [Status](#status) and [docs/architecture.md](docs/architecture.md) for what is implemented and what is not.
 
 ## Development Roadmap
 
@@ -107,7 +107,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 12. Evaluation — **implemented** (real, reproducible metrics against real services; no invented numbers — see the Phase 12 section below)
 13. Observability — **implemented** (real tracing wired into the actual agent execution, local-first, fail-safe; optional LangSmith exporter mechanism-tested only — see the Phase 13 section below)
 14. Security — **implemented** (audit + hardening pass across Phases 1-13; two real vulnerabilities found and fixed, backed by 88 adversarial tests against the real system — see `docs/security.md` and the Phase 14 section below; prompt injection is explicitly not claimed to be solved)
-15. Production deployment
+15. Production deployment — **partially implemented** (Dockerfile, health checks, CI workflow, config validation; no real cloud deployment — see the Phase 15 section below)
 
 ## Engineering Principles
 
@@ -123,6 +123,8 @@ Planned phases, to be implemented one at a time with explicit approval between e
 ## Status
 
 Project setup completed. **Phases 1-14 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, GitHub integration, the evaluation framework, observability/tracing, and security audit/hardening) are implemented.**
+
+**Engineering Lab frontend (phases F1–F6, local-tested, not deployed):** an authenticated `/api/v1` and a Next.js backend-for-frontend (`frontend/`) with operator login, dashboard, repository ingestion/re-index jobs, a file explorer, Ask with citations, a knowledge-graph explorer, and agent tasks with diff review and hash-bound human approval backed by durable PostgreSQL checkpoints. Details: [frontend/README.md](frontend/README.md) and the "Update (frontend phase F…)" notes in [docs/architecture.md](docs/architecture.md).
 
 ### Phase 1 — Repository Ingestion (implemented)
 
@@ -589,6 +591,8 @@ A minimal, real production deployment layer — not a full deployment, and not c
 **What this phase adds:** `backend/api/` — a deliberately minimal FastAPI app exposing only `/`, `/health/live`, and `/health/ready` (liveness never depends on external services; readiness is gated by PostgreSQL only — a Neo4j outage is reported but never fails readiness, since Neo4j is optional). `backend/config.py` is the single source of truth for required vs. optional environment variables, and never returns or logs a value. `backend/Dockerfile` builds the API as a **separate image from the Phase 10 sandbox** — non-root user, no Docker/git CLI, no baked-in secrets — built and run locally against real Postgres this session. `.github/workflows/ci.yml` runs the full suite, the security suite, mypy, and both Docker builds on every push/PR — CI only, no auto-deploy job, since no real deployment target exists.
 
 **Explicitly not done, and not claimed:** no cloud deployment, no frontend (`frontend/` is empty), no HTTP surface for agent operations yet (only health checks), no dependency upgrades this phase (`pip-audit` found 26 known vulnerabilities, almost all transitive; documented rather than papered over).
+
+*Update (Engineering Lab F1–F6):* the "no frontend" and "no HTTP surface for agent operations" points above described this phase only and are no longer true — `frontend/` now holds the Next.js Engineering Lab, and `/api/v1` exposes authenticated read routes, ingestion jobs, Ask, and agent tasks with human approval (still no push/PR endpoint). There is still no cloud deployment.
 
 **Architecture boundary this phase is built around:** the application container that holds real secrets (`DATABASE_URL`, API keys, `GITHUB_TOKEN`) and the Phase 10 sandbox container that executes untrusted repository code are, and remain, two separate images with no shared runtime, no shared credentials, and no Docker-socket access from the app container into the sandbox.
 

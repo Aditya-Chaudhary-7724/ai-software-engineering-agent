@@ -103,4 +103,12 @@ export const api = {
   graphNeighborhood: (id, { node, limit } = {}) =>
     backendGet(`/repositories/${encodeURIComponent(id)}/graph/neighborhood`, { node, limit }),
   graphSearch: (id, q, limit = 20) => backendGet(`/repositories/${encodeURIComponent(id)}/graph/search`, { q, limit }),
+  // F6: agent tasks + bound human approval. Every call only enqueues or
+  // reads; the agent itself runs in the backend's worker.
+  agentRoutePreview: (instruction) => backendPost('/agent-tasks/route-preview', { instruction }),
+  submitAgentTask: (id, instruction) => backendPost(`/repositories/${encodeURIComponent(id)}/agent-tasks`, { instruction }),
+  agentTasks: ({ repositoryId, limit = 20 } = {}) => backendGet('/agent-tasks', { repository_id: repositoryId, limit }),
+  agentTask: (id) => backendGet(`/agent-tasks/${encodeURIComponent(id)}`),
+  decideAgentTask: (id, { approved, interruptId, diffSha256 }) =>
+    backendPost(`/agent-tasks/${encodeURIComponent(id)}/decision`, { approved, interrupt_id: interruptId, diff_sha256: diffSha256 }),
 };

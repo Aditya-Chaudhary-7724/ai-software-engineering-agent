@@ -42,13 +42,13 @@ def test_tests_passing_after_apply_ends_the_loop_with_one_approval(tmp_path, vec
     service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner)
     thread_id = str(uuid.uuid4())
 
-    service.run(
+    result = service.run(
         "Fix the greet function",
         repository_id=index_result.repository_id,
         root_path=str(tmp_path.resolve()),
         thread_id=thread_id,
     )
-    result = service.resume(thread_id=thread_id, approved=True)
+    result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())
 
     assert result.status == "completed"
     assert "Tests: passed." in result.final_response
@@ -82,7 +82,7 @@ def test_failing_tests_trigger_a_bounded_number_of_approved_fix_attempts(tmp_pat
     while result.status == "awaiting_approval":
         approvals += 1
         assert approvals <= 10, "the fix loop must terminate — it did not"
-        result = service.resume(thread_id=thread_id, approved=True)
+        result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())
 
     assert result.status == "completed"
     assert approvals == 3  # initial approval + 2 fix-attempt approvals, never more
@@ -114,10 +114,10 @@ def test_a_fix_attempt_still_requires_its_own_human_approval(tmp_path, vector_st
         thread_id=thread_id,
     )
     assert result.status == "awaiting_approval"
-    result = service.resume(thread_id=thread_id, approved=True)  # approve the original change
+    result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())  # approve the original change
     assert result.status == "awaiting_approval"  # now paused on the fix attempt
 
-    result = service.resume(thread_id=thread_id, approved=False)  # reject the fix
+    result = service.resume(thread_id=thread_id, approved=False, **result.approval_binding())  # reject the fix
 
     assert result.status == "completed"
     assert "not approved" in result.final_response
@@ -141,13 +141,13 @@ def test_time_budget_exhausted_stops_the_loop_even_within_iteration_limit(tmp_pa
     service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner)
     thread_id = str(uuid.uuid4())
 
-    service.run(
+    result = service.run(
         "Fix the greet function",
         repository_id=index_result.repository_id,
         root_path=str(tmp_path.resolve()),
         thread_id=thread_id,
     )
-    result = service.resume(thread_id=thread_id, approved=True)
+    result = service.resume(thread_id=thread_id, approved=True, **result.approval_binding())
 
     assert result.status == "completed"
     assert test_runner.call_count == 1

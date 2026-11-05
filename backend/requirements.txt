@@ -100,3 +100,21 @@ langsmith==0.4.37
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 gunicorn==23.0.0
+
+# Frontend phase F6: durable human-approval state.
+# langgraph-checkpoint-postgres: LangGraph's own PostgreSQL checkpointer.
+#   Problem: the approval pause is a LangGraph interrupt whose state lived in
+#   an in-process MemorySaver, so a restart lost every pending approval and a
+#   second worker process could not resume a thread it didn't start
+#   (docs/deployment.md section 16). This stores checkpoints in the SAME
+#   PostgreSQL the project already runs — no new infrastructure.
+#   Alternatives considered: keeping MemorySaver with a documented
+#   single-worker limit (loses approvals on every deploy); hand-rolled
+#   persistence of LangGraph state (re-implements a maintained library,
+#   against its internal format); Redis (new infrastructure, no benefit).
+#   2.0.25 is the newest release compatible with the pinned
+#   langgraph-checkpoint==2.1.2 (it requires >=2.1.2,<3.0.0). It pulls in
+#   psycopg-pool transitively (not used directly: one connection per task).
+#   Restart/cross-process behaviour is verified in
+#   tests/agent_tasks/test_checkpointing.py.
+langgraph-checkpoint-postgres==2.0.25

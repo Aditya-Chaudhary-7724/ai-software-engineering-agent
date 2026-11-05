@@ -244,3 +244,74 @@ class GraphSearchResults(BaseModel):
     query: str
     results: List[GraphNode]
     limit: int
+
+
+class AgentRoutePreview(BaseModel):
+    """F6: the route the agent's own deterministic classifier
+    (agent/classification.py) will take, shown BEFORE a task is submitted."""
+
+    route: str  # "answer" | "modify" | "test"
+    supported: bool
+    requires_approval: bool
+
+
+class AgentTaskSource(BaseModel):
+    relative_path: str
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    symbol_name: Optional[str] = None
+    found_via: List[str]
+
+
+class AgentTaskOutcome(BaseModel):
+    generator: Optional[str]  # "anthropic" | "stub"
+    is_placeholder: bool
+    approved: Optional[bool]
+    # `applied` is the LAST step only; `changes_applied` counts every
+    # approved change actually written during this task.
+    applied: Optional[bool]
+    changes_applied: int
+    test_ran: bool
+    test_passed: Optional[bool]
+
+
+class AgentTaskProposal(BaseModel):
+    """The most recent proposed change. `state` says whether it is still
+    awaiting a decision; only then may it be approved or rejected, and only
+    with BOTH `interrupt_id` and `diff_sha256` echoed back."""
+
+    state: str  # "pending" | "approved" | "rejected" | "expired" | "closed"
+    interrupt_id: Optional[str]
+    relative_path: Optional[str]
+    diff: str
+    diff_sha256: str
+    message: Optional[str]
+    fix_iteration: int
+    expires_at: Optional[datetime]
+
+
+class AgentTask(BaseModel):
+    """No field exists for the server-side checkout path."""
+
+    id: str
+    trace_id: str
+    repository_id: int
+    instruction: str
+    route: str
+    status: str
+    error_code: Optional[str]
+    execution_log: List[str]
+    final_response: Optional[str]
+    sources: List[AgentTaskSource]
+    outcome: AgentTaskOutcome
+    proposal: Optional[AgentTaskProposal]
+    approvals_granted: int
+    decided_at: Optional[datetime]
+    created_at: Optional[datetime]
+    started_at: Optional[datetime]
+    finished_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+
+class AgentTaskList(BaseModel):
+    tasks: List[AgentTask]

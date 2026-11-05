@@ -12,35 +12,41 @@ Shutdown: `stop()` lets the current job finish within the timeout. If it
 can't, the daemon thread is abandoned with the process; the job's heartbeat
 then goes stale and the next worker to start marks it `worker_interrupted`
 rather than leaving it "running" forever.
+
+F6: the loop is generic (`BackgroundWorker`) so agent tasks reuse it with
+their own store/executor; `IngestionWorker` is the F3 configuration. Any
+store must provide `claim_next(worker_id)` and `heartbeat(worker_id)`;
+`recover(stale_after_seconds)` defaults to `store.fail_stale_running`.
 """
 
 import logging
 import threading
 import time
 import uuid
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import psycopg
-
-from jobs.ingestion import IngestionExecutor
-from jobs.store import JobStore
 
 logger = logging.getLogger("jobs.worker")
 
 
-class IngestionWorker:
+class BackgroundWorker:
     def __init__(
         self,
-        store: JobStore,
-        executor: IngestionExecutor,
+        store: Any,
+        executor: Any,
         *,
         poll_interval_seconds: float = 2.0,
         heartbeat_interval_seconds: float = 15.0,
         stale_after_seconds: int = 120,
         worker_id: Optional[str] = None,
+        name: str = "ingestion",
+        recover: Optional[Callable[[int], object]] = None,
     ) -> None:
         self._store = store
         self._executor = executor
+        self._name = name
+        self._recover = recover
         self._poll_interval = poll_interval_seconds
         self._heartbeat_interval = heartbeat_interval_seconds
         self._stale_after = stale_after_seconds
@@ -54,9 +60,9 @@ class IngestionWorker:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name=f"ingestion-{self.worker_id}", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=f"{self._name}-{self.worker_id}", daemon=True)
         self._thread.start()
-        logger.info("ingestion worker started", extra={"worker_id": self.worker_id})
+        logger.info("%s worker started", self._name, extra={"worker_id": self.worker_id})
 
     def notify(self) -> None:
         self._wake.set()
@@ -69,7 +75,7 @@ class IngestionWorker:
             return True
         self._thread.join(timeout_seconds)
         stopped = not self._thread.is_alive()
-        logger.info("ingestion worker stopped" if stopped else "ingestion worker still busy at shutdown",
+        logger.info("%s worker stopped" if stopped else "%s worker still busy at shutdown", self._name,
                     extra={"worker_id": self.worker_id})
         return stopped
 
@@ -79,7 +85,7 @@ class IngestionWorker:
 
     def run_once(self) -> bool:
         """One iteration (also used directly by tests). Returns True if a job ran."""
-        self._store.fail_stale_running(self._stale_after)
+        (self._recover or self._store.fail_stale_running)(self._stale_after)
         job = self._store.claim_next(self.worker_id)
         if job is None:
             return False
@@ -113,10 +119,14 @@ class IngestionWorker:
                 # Database down or schema not applied: back off quietly and
                 # retry; log at most once a minute.
                 if time.monotonic() - self._last_error_log > 60:
-                    logger.warning("ingestion worker cannot reach the jobs table; retrying")
+                    logger.warning("%s worker cannot reach its jobs table; retrying", self._name)
                     self._last_error_log = time.monotonic()
             except Exception:
-                logger.exception("ingestion worker loop error")
+                logger.exception("%s worker loop error", self._name)
             if not ran:
                 self._wake.wait(self._poll_interval)
                 self._wake.clear()
+
+
+class IngestionWorker(BackgroundWorker):
+    """The F3 ingestion/re-index worker (unchanged behaviour)."""
