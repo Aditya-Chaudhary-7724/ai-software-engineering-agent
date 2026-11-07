@@ -32,6 +32,7 @@ from rag.llm.stub_provider import StubLLMProvider
 from rag.prompt import SYSTEM_PROMPT, build_prompt
 from rag.ranking import merge_and_rank
 
+from evaluation.cleanup import delete_evaluation_repository
 from evaluation.dataset import RAG_CASES, RAGCase, build_sample_repository
 from evaluation.llm_judge import LLMJudge
 from evaluation.metrics import recall_at_k
@@ -41,14 +42,7 @@ _TOP_K = 10
 
 
 def _cleanup_repository(vector_store: VectorStore, repository_id: int) -> None:
-    conn = vector_store.connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM code_chunks WHERE repository_id = %s", (repository_id,))
-            cur.execute("DELETE FROM repositories WHERE id = %s", (repository_id,))
-        conn.commit()
-    finally:
-        conn.close()
+    delete_evaluation_repository(vector_store, repository_id)
 
 
 def _evaluate_case(

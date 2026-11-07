@@ -124,7 +124,7 @@ Planned phases, to be implemented one at a time with explicit approval between e
 
 Project setup completed. **Phases 1-14 (repository ingestion, code parsing, vector search, code RAG, the knowledge graph, hybrid retrieval, the stateful agent, repository tools, code modification, the Docker sandbox + testing loop, GitHub integration, the evaluation framework, observability/tracing, and security audit/hardening) are implemented.**
 
-**Engineering Lab frontend (phases F1–F6, local-tested, not deployed):** an authenticated `/api/v1` and a Next.js backend-for-frontend (`frontend/`) with operator login, dashboard, repository ingestion/re-index jobs, a file explorer, Ask with citations, a knowledge-graph explorer, and agent tasks with diff review and hash-bound human approval backed by durable PostgreSQL checkpoints. Details: [frontend/README.md](frontend/README.md) and the "Update (frontend phase F…)" notes in [docs/architecture.md](docs/architecture.md).
+**Engineering Lab frontend (phases F1–F6, local-tested, not deployed):** an authenticated `/api/v1` and a Next.js backend-for-frontend (`frontend/`) with operator login, dashboard, repository ingestion/re-index jobs, a file explorer, Ask with citations, a knowledge-graph explorer, and agent tasks with diff review and hash-bound human approval backed by durable PostgreSQL checkpoints. F7 (tests & evaluation) is in progress: new evaluation categories exist (see [docs/evaluation.md](docs/evaluation.md)) but the F7 UI does not. Details: [frontend/README.md](frontend/README.md) and the "Update (frontend phase F…)" notes in [docs/architecture.md](docs/architecture.md).
 
 ### Phase 1 — Repository Ingestion (implemented)
 
@@ -503,6 +503,8 @@ set -a; source .env; set +a
 .venv/bin/python backend/scripts/run_evaluation.py                  # prints the full report; exit code reflects pass/fail
 .venv/bin/python backend/scripts/run_evaluation.py --json out.json  # also export raw results as JSON
 .venv/bin/python backend/scripts/run_evaluation.py --llm-judge       # adds a real-LLM RAG metric (requires LLM_API_KEY)
+# F7: full deterministic run incl. agent lifecycle + regression counts — see docs/evaluation.md
+.venv/bin/python backend/scripts/run_evaluation.py --isolated-database-url "postgresql://$USER@localhost:5432/ai_swe_agent_test" --with-regression
 ```
 
 ### Phase 13 — Observability & Tracing (implemented)

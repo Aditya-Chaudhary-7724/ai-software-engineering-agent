@@ -87,3 +87,56 @@ def test_export_json_round_trips_all_results(tmp_path):
     assert data["results"][0]["case_id"] == "retrieval-example"
     assert data["results"][1]["passed"] is False
     assert data["results"][2]["skipped"] is True
+
+
+def test_report_separates_deterministic_and_real_model_counts():
+    from evaluation.models import KIND_REAL_MODEL
+
+    report = EvaluationReport(
+        results=[
+            CaseResult(case_id="d1", category="answers", description="d", passed=True),
+            CaseResult(case_id="d2", category="answers", description="d", passed=False),
+            CaseResult(case_id="r1", category="answers_real_model", description="r", passed=False, skipped=True,
+                       skip_reason="no key", evaluation_kind=KIND_REAL_MODEL),
+        ],
+        environment={"llm_provider": "StubLLMProvider (placeholder, deterministic)"},
+    )
+    text = render_text_report(report)
+    assert "Deterministic: 1 passed, 1 failed, 0 skipped (of 2)" in text
+    assert "Real-model: 0 passed, 0 failed, 1 skipped (of 1)" in text
+    assert "no real-model evaluation ran" in text
+    assert "llm_provider: StubLLMProvider" in text
+
+
+def test_real_model_results_are_labelled_and_suppress_the_no_real_model_note():
+    from evaluation.models import KIND_REAL_MODEL
+
+    report = EvaluationReport(
+        results=[CaseResult(case_id="r1", category="answers_real_model", description="r", passed=True, evaluation_kind=KIND_REAL_MODEL)]
+    )
+    text = render_text_report(report)
+    assert "[PASS · REAL MODEL] r1" in text
+    assert "no real-model evaluation ran" not in text
+
+
+def test_export_json_includes_summary_and_environment(tmp_path):
+    import json
+
+    report = EvaluationReport(
+        results=[CaseResult(case_id="d1", category="answers", description="d", passed=True)], environment={"neo4j": "reachable"}
+    )
+    path = tmp_path / "r.json"
+    export_json(report, path)
+    data = json.loads(path.read_text())
+    assert data["summary"]["deterministic"] == {"total": 1, "passed": 1, "failed": 0, "skipped": 0}
+    assert data["summary"]["real_model"]["total"] == 0
+    assert data["environment"] == {"neo4j": "reachable"}
+    assert data["results"][0]["evaluation_kind"] == "deterministic"
+
+
+def test_database_label_never_includes_credentials():
+    from evaluation.environment import database_label
+
+    label = database_label("postgresql://alice:s3cret@db.internal:5432/app?sslmode=require")
+    assert label == "db.internal/app"
+    assert "s3cret" not in label and "alice" not in label

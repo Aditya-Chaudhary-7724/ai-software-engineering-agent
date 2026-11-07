@@ -13,6 +13,14 @@ always with enough detail (`failure_reason`, `retrieval_results`,
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+# F7: what produced a case's result. "deterministic" cases use only fixed
+# inputs and non-production stand-ins (StubLLMProvider, hash embeddings,
+# scripted test runners) and must give the same answer on every run;
+# "real_model" cases need a real LLM/embedding provider, are skipped when
+# none is configured, and are never added to the deterministic totals.
+KIND_DETERMINISTIC = "deterministic"
+KIND_REAL_MODEL = "real_model"
+
 
 @dataclass(frozen=True)
 class MetricResult:
@@ -56,11 +64,28 @@ class CaseResult:
     # don't run the agent (pure retrieval/RAG cases) or when tracing
     # wasn't wired in for a given run.
     trace_id: Optional[str] = None
+    evaluation_kind: str = KIND_DETERMINISTIC
 
 
 @dataclass(frozen=True)
 class EvaluationReport:
     results: List[CaseResult]
+    # F7: the configuration the run actually used (provider names, which
+    # services were reachable) — never a credential or a full URL.
+    environment: Dict[str, str] = field(default_factory=dict)
+
+    def of_kind(self, kind: str) -> List[CaseResult]:
+        return [r for r in self.results if r.evaluation_kind == kind]
+
+    def counts(self, kind: Optional[str] = None) -> Dict[str, int]:
+        results = self.results if kind is None else self.of_kind(kind)
+        evaluated = [r for r in results if not r.skipped]
+        return {
+            "total": len(results),
+            "passed": sum(1 for r in evaluated if r.passed),
+            "failed": sum(1 for r in evaluated if not r.passed),
+            "skipped": len(results) - len(evaluated),
+        }
 
     @property
     def total(self) -> int:

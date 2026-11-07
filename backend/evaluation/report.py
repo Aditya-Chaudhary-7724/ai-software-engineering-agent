@@ -14,7 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Union
 
-from evaluation.models import EvaluationReport
+from evaluation.models import KIND_DETERMINISTIC, KIND_REAL_MODEL, EvaluationReport
 
 
 def _aggregate_mrr_lines(report: EvaluationReport) -> list:
@@ -40,6 +40,21 @@ def _aggregate_mrr_lines(report: EvaluationReport) -> list:
     return lines
 
 
+def _kind_summary_lines(report: EvaluationReport) -> list:
+    """F7: deterministic and real-model results are never added together."""
+    lines = []
+    for kind, label in ((KIND_DETERMINISTIC, "Deterministic"), (KIND_REAL_MODEL, "Real-model")):
+        c = report.counts(kind)
+        lines.append(f"  {label}: {c['passed']} passed, {c['failed']} failed, {c['skipped']} skipped (of {c['total']})")
+    real = report.counts(KIND_REAL_MODEL)
+    if real["total"] == real["skipped"]:
+        lines.append(
+            "  NOTE: no real-model evaluation ran — every result above comes from deterministic stand-ins "
+            "(stub LLM, hash embeddings). They measure pipeline correctness, NOT answer quality."
+        )
+    return lines
+
+
 def render_text_report(report: EvaluationReport) -> str:
     lines = []
     lines.append("=" * 70)
@@ -49,6 +64,11 @@ def render_text_report(report: EvaluationReport) -> str:
         f"Total cases: {report.total}  |  Passed: {report.passed_count}  |  "
         f"Failed: {report.failed_count}  |  Skipped: {report.skipped_count}"
     )
+    lines.extend(_kind_summary_lines(report))
+    if report.environment:
+        lines.append("Environment (what this run actually used):")
+        for key, value in report.environment.items():
+            lines.append(f"    {key}: {value}")
     lines.append("")
 
     for category, results in report.by_category().items():
@@ -66,6 +86,8 @@ def render_text_report(report: EvaluationReport) -> str:
                 continue
 
             status = "PASS" if result.passed else "FAIL"
+            if result.evaluation_kind == KIND_REAL_MODEL:
+                status += " · REAL MODEL"
             latency = f" ({result.latency_seconds:.3f}s)" if result.latency_seconds is not None else ""
             lines.append(f"  [{status}] {result.case_id}{latency} — {result.description}")
 
@@ -93,5 +115,13 @@ def render_text_report(report: EvaluationReport) -> str:
 
 
 def export_json(report: EvaluationReport, path: Union[str, Path]) -> None:
-    data = {"results": [asdict(result) for result in report.results]}
+    data = {
+        "summary": {
+            "all": report.counts(),
+            KIND_DETERMINISTIC: report.counts(KIND_DETERMINISTIC),
+            KIND_REAL_MODEL: report.counts(KIND_REAL_MODEL),
+        },
+        "environment": report.environment,
+        "results": [asdict(result) for result in report.results],
+    }
     Path(path).write_text(json.dumps(data, indent=2))

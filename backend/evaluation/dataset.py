@@ -157,3 +157,63 @@ AGENT_CASES = [
         forbidden_log_substrings=("Applied approved change",),
     ),
 ]
+
+
+@dataclass(frozen=True)
+class AnswerCase:
+    """F7: a question for the service behind Ask (`HybridRAGService.answer`).
+
+    `answerable=False` cases have NO supporting code in the sample
+    repository — their words were chosen to share no full-text-search
+    terms with it — so the correct behavior is to acknowledge
+    insufficient evidence rather than answer. `expected_terms` are what a
+    REAL model's answer should mention (checked only in the real-model
+    category); deterministic checks never read the answer text.
+    """
+
+    case_id: str
+    description: str
+    question: str
+    answerable: bool
+    expected_files: FrozenSet[str] = frozenset()
+    expected_terms: Tuple[str, ...] = ()
+
+
+ANSWER_CASES = [
+    AnswerCase(
+        case_id="answer-login-route",
+        description="Where the login route lives: must cite routes.py with lexical evidence.",
+        question="Where is the login route implemented?",
+        answerable=True,
+        expected_files=frozenset({"routes.py"}),
+        expected_terms=("login_route", "routes.py"),
+    ),
+    AnswerCase(
+        case_id="answer-generate-jwt",
+        description="What generate_jwt returns: must cite auth_service.py with lexical evidence.",
+        question="What does generate_jwt return?",
+        answerable=True,
+        expected_files=frozenset({"auth_service.py"}),
+        expected_terms=("jwt-for-",),
+    ),
+    AnswerCase(
+        case_id="answer-greet-test",
+        description="How greet is tested: must cite test_greet.py with lexical evidence.",
+        question="Which test checks the greet function?",
+        answerable=True,
+        expected_files=frozenset({"test_greet.py"}),
+        expected_terms=("test_greet",),
+    ),
+    AnswerCase(
+        case_id="answer-insufficient-image-resizing",
+        description="Nothing in the repository resizes images: no lexical evidence may be claimed.",
+        question="How are uploaded images resized?",
+        answerable=False,
+    ),
+    AnswerCase(
+        case_id="answer-insufficient-database-pool",
+        description="No database code exists: no lexical evidence may be claimed.",
+        question="How is the database connection pool configured?",
+        answerable=False,
+    ),
+]

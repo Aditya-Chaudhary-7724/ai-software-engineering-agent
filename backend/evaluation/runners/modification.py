@@ -41,20 +41,13 @@ from agent.service import AgentService
 from agent.state import MAX_FIX_ITERATIONS
 
 from evaluation.environment import docker_available
+from evaluation.cleanup import delete_evaluation_graph, delete_evaluation_repository
 from evaluation.models import CaseResult, MetricResult
 
 
 def _cleanup(vector_store: VectorStore, repository_id: int, neo4j_client: Neo4jClient, root_path: str) -> None:
-    conn = vector_store.connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM code_chunks WHERE repository_id = %s", (repository_id,))
-            cur.execute("DELETE FROM repositories WHERE id = %s", (repository_id,))
-        conn.commit()
-    finally:
-        conn.close()
-    neo4j_client.run("MATCH (n {repository_root_path: $root_path}) DETACH DELETE n", root_path=root_path)
-    neo4j_client.run("MATCH (r:Repository {root_path: $root_path}) DETACH DELETE r", root_path=root_path)
+    delete_evaluation_repository(vector_store, repository_id)
+    delete_evaluation_graph(neo4j_client, root_path)
 
 
 def _evaluate_approval_and_single_file_scope(vector_store: VectorStore, neo4j_client: Neo4jClient, tracer: Tracer) -> CaseResult:
@@ -174,14 +167,7 @@ def _evaluate_stale_change_protection(vector_store: VectorStore) -> CaseResult:
                 latency_seconds=time.monotonic() - start,
             )
         finally:
-            conn = vector_store.connect()
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM code_chunks WHERE repository_id = %s", (index_result.repository_id,))
-                    cur.execute("DELETE FROM repositories WHERE id = %s", (index_result.repository_id,))
-                conn.commit()
-            finally:
-                conn.close()
+            delete_evaluation_repository(vector_store, index_result.repository_id)
 
 
 def _evaluate_failed_change_not_silently_accepted(vector_store: VectorStore, neo4j_client: Neo4jClient, tracer: Tracer) -> CaseResult:

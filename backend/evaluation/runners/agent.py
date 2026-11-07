@@ -44,20 +44,13 @@ from agent.service import AgentService
 from agent.state import MAX_RETRIES
 
 from evaluation.dataset import AGENT_CASES, AgentCase, build_sample_repository
+from evaluation.cleanup import delete_evaluation_graph, delete_evaluation_repository
 from evaluation.models import CaseResult, MetricResult
 
 
 def _cleanup(vector_store: VectorStore, repository_id: int, neo4j_client: Neo4jClient, root_path: str) -> None:
-    conn = vector_store.connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM code_chunks WHERE repository_id = %s", (repository_id,))
-            cur.execute("DELETE FROM repositories WHERE id = %s", (repository_id,))
-        conn.commit()
-    finally:
-        conn.close()
-    neo4j_client.run("MATCH (n {repository_root_path: $root_path}) DETACH DELETE n", root_path=root_path)
-    neo4j_client.run("MATCH (r:Repository {root_path: $root_path}) DETACH DELETE r", root_path=root_path)
+    delete_evaluation_repository(vector_store, repository_id)
+    delete_evaluation_graph(neo4j_client, root_path)
 
 
 def _evaluate_routing_case(case: AgentCase, service: AgentService, repository_id: int, root_path: str) -> CaseResult:
