@@ -111,3 +111,19 @@ def test_serializer_refuses_to_load_json_or_pickle_checkpoint_data(stored, monke
     with pytest.raises(UnsafeCheckpointDataError):
         SafeCheckpointSerializer().loads_typed(stored)
     assert called == []
+
+
+def test_an_encoder_type_error_is_the_same_stable_refusal(monkeypatch):
+    """F8: ormsgpack 1.13 (the 3.11 image) raises TypeError for values it
+    cannot encode instead of letting the parent fall back to JSON. Whatever
+    the installed version does, the caller sees UnsafeCheckpointDataError,
+    so the executor reports `checkpoint_serialization_refused`, never
+    `internal_error`."""
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+    def raise_type_error(self, obj):
+        raise TypeError("string contains surrogates")
+
+    monkeypatch.setattr(JsonPlusSerializer, "dumps_typed", raise_type_error)
+    with pytest.raises(UnsafeCheckpointDataError):
+        SafeCheckpointSerializer().dumps_typed({"final_response": "x"})

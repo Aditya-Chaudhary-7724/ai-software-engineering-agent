@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { getAuthConfig } from '@/lib/server/config';
 import { SESSION_COOKIE_NAME, verifySessionToken } from '@/lib/server/session';
+import { applySecurityHeaders, buildContentSecurityPolicy, createNonce, securityContext } from '@/lib/security-headers';
 
 /**
  * First gate (Next.js 16 "proxy", formerly middleware; runs on Node.js).
@@ -23,22 +24,37 @@ function currentSession(request) {
   }
 }
 
+/**
+ * F8: the nonce-bearing CSP goes on the forwarded REQUEST headers (where
+ * Next.js reads the nonce for the scripts it renders) and on the response.
+ */
+function passThrough(request, headerContext) {
+  const headers = new Headers(request.headers);
+  headers.set('Content-Security-Policy', headerContext.csp);
+  return applySecurityHeaders(NextResponse.next({ request: { headers } }), headerContext);
+}
+
 export function proxy(request) {
   const { pathname, search } = request.nextUrl;
   const session = currentSession(request);
+  const { development, https } = securityContext();
+  const headerContext = { csp: buildContentSecurityPolicy({ nonce: createNonce(), development, https }), https };
 
   if (PUBLIC_PATHS.has(pathname)) {
-    if (pathname === '/login' && session) return NextResponse.redirect(new URL('/', request.url));
-    return NextResponse.next();
+    if (pathname === '/login' && session) return applySecurityHeaders(NextResponse.redirect(new URL('/', request.url)), headerContext);
+    return passThrough(request, headerContext);
   }
-  if (session) return NextResponse.next();
+  if (session) return passThrough(request, headerContext);
 
   if (pathname.startsWith('/api/')) {
-    return NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: { 'Cache-Control': 'no-store' } });
+    return applySecurityHeaders(
+      NextResponse.json({ error: 'unauthenticated' }, { status: 401, headers: { 'Cache-Control': 'no-store' } }),
+      headerContext,
+    );
   }
   const loginUrl = new URL('/login', request.url);
   if (pathname !== '/') loginUrl.searchParams.set('next', pathname + search);
-  return NextResponse.redirect(loginUrl);
+  return applySecurityHeaders(NextResponse.redirect(loginUrl), headerContext);
 }
 
 export const config = {

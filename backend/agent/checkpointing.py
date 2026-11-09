@@ -45,7 +45,17 @@ class SafeCheckpointSerializer(JsonPlusSerializer):
         super().__init__(pickle_fallback=False)
 
     def dumps_typed(self, obj: Any) -> Tuple[str, bytes]:
-        type_, data = super().dumps_typed(obj)
+        try:
+            type_, data = super().dumps_typed(obj)
+        except TypeError as exc:
+            # F8: which error a value msgpack cannot encode produces depends
+            # on the ormsgpack version. 1.11 lets JsonPlusSerializer fall back
+            # to JSON (refused below); 1.13 — what the 3.11 image resolves —
+            # raises TypeError("string contains surrogates") straight through.
+            # Both must surface as the same stable refusal, or the executor
+            # reports `internal_error` instead of
+            # `checkpoint_serialization_refused`. Never a fallback either way.
+            raise UnsafeCheckpointDataError("refusing to checkpoint data msgpack cannot encode") from exc
         if type_ not in _SAFE_TYPES:
             raise UnsafeCheckpointDataError(f"refusing to checkpoint data with encoding {type_!r}")
         return type_, data

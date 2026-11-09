@@ -1,4 +1,5 @@
 import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
+import { connection } from 'next/server';
 
 import './globals.css';
 
@@ -13,7 +14,13 @@ export const metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  // F8: the Content-Security-Policy nonce (proxy.js) is per request, so EVERY
+  // page must be rendered per request. All pages already were (the DAL reads
+  // cookies) except the built-in 404, which Next prerendered as static HTML
+  // whose scripts carried no nonce and were blocked. connection() opts the
+  // whole tree into dynamic rendering.
+  await connection();
   return (
     <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
       <body>{children}</body>

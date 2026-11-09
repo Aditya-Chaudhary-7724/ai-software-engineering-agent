@@ -34,6 +34,7 @@ Isolation model for every run:
     that is still running.
 """
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -49,6 +50,27 @@ from sandbox.models import PYTHON_SANDBOX_IMAGE, SandboxLimits, TestRunResult
 
 _DOCKER_AVAILABILITY_TIMEOUT_SECONDS = 5
 _KILL_TIMEOUT_SECONDS = 10
+# `nobody:nogroup` on Debian-based images such as python:3.11-slim.
+_UNPRIVILEGED_FALLBACK_USER = "65534:65534"
+
+
+def container_user() -> str:
+    """The uid:gid untrusted code runs as inside the sandbox — never root.
+
+    F8: the image has no USER, so without `--user` repository code ran as
+    uid 0. Capabilities are dropped and no-new-privileges is set, but uid 0
+    is still host root if the container is ever escaped (no user-namespace
+    remapping is assumed), and on a Linux host root-owned files written into
+    the bind-mounted workspace could not be deleted by the non-root app.
+    Running as the invoking user keeps the workspace writable for pytest's
+    own files and removable afterwards. If the app itself runs as root, the
+    container still does not: it falls back to `nobody`.
+    """
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    if getuid is None or getgid is None or getuid() == 0:
+        return _UNPRIVILEGED_FALLBACK_USER
+    return f"{getuid()}:{getgid()}"
 
 
 def _as_text(value: Optional[object]) -> str:
@@ -129,6 +151,8 @@ class DockerTestRunner(TestRunner):
             "--security-opt",
             "no-new-privileges",
             "--read-only",
+            "--user",
+            container_user(),
             "--tmpfs",
             "/tmp:rw,size=64m",
             "-w",

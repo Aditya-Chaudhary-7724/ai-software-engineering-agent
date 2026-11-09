@@ -1,5 +1,12 @@
 # Phase 15: CI verification — deliberately CI only, no CD/deploy job.
 #
+# F8 additions: a `frontend` job (Vitest, production build, npm audit);
+# pinned test tools; a Python dependency audit of the SHIPPED backend image
+# against a reviewed accept-list (.github/pip-audit-accepted.txt), so any
+# new advisory fails the build; and separate application/test databases so
+# tests/conftest.py's guard (pytest refuses to run against DATABASE_URL)
+# holds in CI too.
+#
 # This workflow verifies the codebase (tests, types, security tests,
 # diff hygiene, Docker image builds). It does NOT deploy anything
 # anywhere: there is no actual deployment target, registry, or hosting
@@ -27,6 +34,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+
+# F8: least privilege for the automatic GITHUB_TOKEN. This workflow only
+# reads the repository; it never pushes, comments, or publishes.
+permissions:
+  contents: read
 
 jobs:
   verify:
@@ -66,7 +78,9 @@ jobs:
       # pattern, pointed at the service container above instead of a
       # local Homebrew Postgres.
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_swe_agent_test
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_swe_agent_test
+      # F8: a DIFFERENT database (created below). tests/conftest.py refuses
+      # a session whose TEST_DATABASE_URL is the application's database.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_swe_agent_app
       NEO4J_URI: bolt://localhost:7687
       NEO4J_USERNAME: neo4j
       NEO4J_PASSWORD: testpassword
@@ -89,7 +103,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip install pytest mypy types-requests httpx
+          # F8: pinned to the versions verified locally (reproducible CI).
+          pip install pytest==8.4.2 mypy==1.19.1 types-requests==2.32.4.20260107 httpx==0.28.1 pip-audit==2.9.0
+
+      - name: Create the separate application database
+        run: |
+          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/ai_swe_agent_test', autocommit=True); c.execute('CREATE DATABASE ai_swe_agent_app')"
 
       - name: Build the Phase 10 sandbox image
         # Required by tests/sandbox and tests/security's real-Docker
@@ -122,9 +141,51 @@ jobs:
           docker run --rm ai-swe-agent-backend:ci git --version
           test -z "$(docker run --rm ai-swe-agent-backend:ci find /app -iname '*.env*')"
 
+      - name: Audit the Python packages that actually ship (pip-audit, OSV)
+        # The image's own `pip freeze` — exactly what production runs —
+        # audited without resolving or installing anything. Every accepted
+        # advisory is listed WITH its reachability reasoning in
+        # .github/pip-audit-accepted.txt; anything else fails this step.
+        run: |
+          docker run --rm ai-swe-agent-backend:ci pip freeze > shipped-requirements.txt
+          IGNORES=$(grep -oE '^(PYSEC|GHSA|CVE)-[A-Za-z0-9-]+' .github/pip-audit-accepted.txt | sed 's/^/--ignore-vuln /' | tr '\n' ' ')
+          pip-audit -r shipped-requirements.txt --disable-pip --no-deps -s osv --timeout 90 $IGNORES
+
       - name: Run the production configuration validation script
         # DATABASE_URL (the one required setting) is set above from the
         # service container; every optional setting (LLM_API_KEY, GITHUB_TOKEN,
         # ...) is intentionally absent in CI, so this is expected to exit 0
         # while reporting those as "not set (optional)" — never printing a value.
         run: python backend/scripts/check_production_config.py
+
+  frontend:
+    # F8: the Engineering Lab (Next.js backend-for-frontend). No secrets:
+    # the build needs none (every page is rendered per request), and tests
+    # use their own fake values.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"  # package.json engines: >=24.7.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install exactly the locked dependencies
+        run: npm ci
+
+      - name: Unit tests (Vitest)
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm audit

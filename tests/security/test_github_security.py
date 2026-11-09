@@ -116,7 +116,15 @@ def test_real_git_rejects_flag_injection_style_branch_names(tmp_path, malicious_
     from github_integration.exceptions import GitOperationError
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-q", "-m", "init"], check=True, capture_output=True)
+    # F8: a commit-local identity for this throwaway repository (`-c`, never
+    # git config). Without it the fixture depended on the machine's global
+    # identity and failed (exit 128) where there is none: the backend image,
+    # and GitHub Actions runners.
+    subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid", "-C", str(tmp_path),
+         "commit", "--allow-empty", "-q", "-m", "init"],
+        check=True, capture_output=True,
+    )
 
     with pytest.raises(GitOperationError):
         GitOperations().create_branch(tmp_path, malicious_branch_name)

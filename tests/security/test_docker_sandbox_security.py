@@ -8,6 +8,7 @@ SERVICE" convention.
 """
 
 import subprocess
+from pathlib import Path
 
 from sandbox.docker_runner import DockerTestRunner
 from sandbox.models import SandboxLimits
@@ -141,3 +142,39 @@ def test_sandbox_container_cannot_mutate_the_real_repository(tmp_path):
     )
     DockerTestRunner(SandboxLimits(timeout_seconds=15)).run(str(tmp_path))
     assert not (tmp_path / "created_by_container.txt").exists()
+
+
+# -- F8: untrusted code never runs as root ------------------------------------------
+
+
+def test_sandbox_command_never_runs_as_root():
+    from sandbox import docker_runner
+
+    cmd = DockerTestRunner()._build_docker_command(Path("/tmp/workspace"), "c", ["true"], "some-image")
+    user = cmd[cmd.index("--user") + 1]
+    assert user == docker_runner.container_user()
+    assert user.split(":")[0] != "0"
+
+
+def test_container_user_falls_back_to_nobody_when_the_app_runs_as_root(monkeypatch):
+    from sandbox import docker_runner
+
+    monkeypatch.setattr(docker_runner.os, "getuid", lambda: 0)
+    monkeypatch.setattr(docker_runner.os, "getgid", lambda: 0)
+    assert docker_runner.container_user() == "65534:65534"
+
+
+@requires_sandbox_image
+def test_untrusted_code_runs_without_root_and_can_still_use_its_workspace(tmp_path):
+    """Real container: the repository's own test asserts it is not uid 0,
+    then writes into its workspace (pytest's cache and __pycache__ need it)."""
+    (tmp_path / "test_identity.py").write_text(
+        "import os\n"
+        "def test_not_root_and_workspace_writable():\n"
+        "    assert os.getuid() != 0, 'sandbox code must not run as root'\n"
+        "    assert os.getgid() != 0\n"
+        "    open('written-by-sandbox.txt', 'w').write('ok')\n"
+    )
+    result = DockerTestRunner(SandboxLimits(timeout_seconds=30)).run(str(tmp_path))
+    assert result.passed is True, result.stdout + result.stderr
+    assert not (tmp_path / "written-by-sandbox.txt").exists()  # it wrote to the COPY, never the real repo

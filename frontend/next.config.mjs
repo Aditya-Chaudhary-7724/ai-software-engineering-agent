@@ -1,8 +1,9 @@
 /**
- * Baseline security headers for every response. A full nonce-based
- * script-src Content-Security-Policy is scheduled for F8 (hardening); the
- * directives below are safe to apply now because they don't restrict
- * Next.js's own inline bootstrap scripts.
+ * Baseline security headers for EVERY response, including static assets the
+ * proxy does not see. F8: pages and API routes additionally get a per-request,
+ * nonce-based script-src Content-Security-Policy (and HSTS over HTTPS) from
+ * proxy.js / lib/security-headers.js. Browsers enforce every CSP header they
+ * receive, so this baseline only ever adds restrictions.
  */
 const securityHeaders = [
   { key: 'Content-Security-Policy', value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },

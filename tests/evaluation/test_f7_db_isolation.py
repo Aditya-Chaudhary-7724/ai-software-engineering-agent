@@ -330,6 +330,7 @@ def test_regression_subprocess_pins_every_database_variable_to_the_verified_targ
     assert result.passed
     assert captured[0]["DATABASE_URL"] == "postgresql://eval@localhost:5432/isolated"
     assert captured[0]["TEST_DATABASE_URL"] == "postgresql://eval@localhost:5432/isolated"
+    assert captured[0]["PYTEST_DATABASE_URL_IS_VERIFIED_DISPOSABLE"] == "1"
 
 
 def test_regression_refuses_when_its_database_is_unreachable(monkeypatch):

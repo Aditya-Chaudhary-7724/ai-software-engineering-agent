@@ -105,8 +105,16 @@ def refusal_reason(protected_database_url: Optional[str], isolated_database_url:
 
 def subprocess_environment(database_url: str) -> Dict[str, str]:
     """Parent environment with every database variable pinned to the
-    verified target (see module docstring)."""
-    return {**os.environ, "TEST_DATABASE_URL": database_url, "DATABASE_URL": database_url}
+    verified target (see module docstring). The last variable tells the
+    child's tests/conftest.py guard that TEST_DATABASE_URL == DATABASE_URL
+    here is deliberate: `refusal_reason` has already verified, by server
+    identity, that this target is not the application's database."""
+    return {
+        **os.environ,
+        "TEST_DATABASE_URL": database_url,
+        "DATABASE_URL": database_url,
+        "PYTEST_DATABASE_URL_IS_VERIFIED_DISPOSABLE": "1",
+    }
 
 
 def parse_junit(path: Path) -> Dict[str, int]:

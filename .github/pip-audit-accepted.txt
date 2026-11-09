@@ -1,0 +1,40 @@
+# F8: Python advisories ACCEPTED for now, each with the reason it is not
+# reachable (or only partly mitigated) in THIS application. CI's pip-audit
+# step ignores exactly these IDs, so any NEW advisory fails the build.
+#
+# Measured 2026-11-07 against the shipped backend image's own `pip freeze`
+# (pip-audit 2.9.0, OSV): 20 advisories in 7 packages. Format: one ID per
+# line, then `#` and the reasoning. Remove an entry when its package is
+# upgraded. Upgrade path: docs/deployment.md, section 12.
+#
+# NONE of these is FIXED: the vulnerable code still ships. Labels:
+#   MITIGATED        - reachable, but this app's code blocks the known impact
+#   PARTLY MITIGATED - reachable under a precondition stated on the line
+#   NOT REACHABLE    - the vulnerable feature is never used by this app
+#
+# starlette 0.41.3 (pinned by fastapi==0.115.6)
+PYSEC-2026-161      # Host header poisons request.url. MITIGATED: the app's only path check (no-store middleware) uses scope["path"]; trailing-slash redirects (which built Location from Host, before auth) are disabled; auth is router-matched on scope["path"]. request.url itself is still poisonable - never use it for a security decision (tests/api/test_f8_header_hardening.py)
+PYSEC-2026-248      # path not starting with "/" moves request.url authority. MITIGATED: same as PYSEC-2026-161
+PYSEC-2026-1941     # multipart large-file DoS. NOT REACHABLE: no form/upload route; python-multipart is not installed
+PYSEC-2026-249      # urlencoded form limits ignored. NOT REACHABLE: request.form() is never called
+PYSEC-2026-1942     # FileResponse Range-merging DoS. NOT REACHABLE: FileResponse is not used
+PYSEC-2026-2280     # HTTPEndpoint method lookup. NOT REACHABLE: no HTTPEndpoint subclasses
+PYSEC-2026-2281     # StaticFiles UNC SSRF on Windows. NOT REACHABLE: no StaticFiles, Linux image
+# requests 2.32.5
+PYSEC-2026-2275     # extract_zipped_paths predictable temp name, needs a LOCAL attacker. NOT REACHABLE: never called
+# langgraph / langgraph-checkpoint 0.6.11 / 2.1.2
+PYSEC-2026-83       # msgpack checkpoints can reconstruct Python objects. PARTLY MITIGATED: needs write access to the PostgreSQL checkpoint tables (= database already compromised). Fix requires langgraph 1.x
+PYSEC-2026-1527     # RCE in JsonPlusSerializer "json" mode. MITIGATED: SafeCheckpointSerializer refuses json/pickle encodings (agent/checkpointing.py)
+PYSEC-2026-2573     # unsafe JSON deserialization when loading checkpoints. MITIGATED: same serializer refuses json on load
+PYSEC-2026-2574     # BaseCache deserialization. NOT REACHABLE: no node cache / CachePolicy is configured
+# langgraph-checkpoint-postgres 2.0.25
+PYSEC-2026-3635     # PostgresStore namespace prefix matching. NOT REACHABLE: only PostgresSaver (checkpoints) is used, never a Store
+GHSA-6hmw-9432-67qq # PostgresStore namespace labels with ".". NOT REACHABLE: no Store
+# langgraph-sdk 0.2.15 (transitive)
+PYSEC-2026-2575     # SDK URL path construction. NOT REACHABLE: langgraph_sdk is never imported
+PYSEC-2026-4240     # SDK custom auth actions=. NOT REACHABLE: no LangGraph server/SDK auth
+# langsmith 0.4.37 (optional trace export, only with LANGSMITH_API_KEY)
+PYSEC-2026-2582     # public prompt pull deserialization. NOT REACHABLE: prompts are never pulled
+PYSEC-2026-2583     # streaming token events bypass redaction. NOT REACHABLE: exporter sends finished, already-redacted spans (observability/redaction.py), no streaming callbacks
+PYSEC-2026-2584     # SSRF via tracing header injection. NOT REACHABLE: no distributed-tracing headers are read from requests
+GHSA-f4xh-w4cj-qxq8 # TracingMiddleware file read. NOT REACHABLE: TracingMiddleware is not used

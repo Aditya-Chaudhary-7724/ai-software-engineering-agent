@@ -16,14 +16,32 @@ import pytest
 PUBLIC_TEST_REPO_URL = "https://github.com/octocat/Hello-World"
 
 
-def _network_available() -> bool:
+# F8: the unauthenticated GitHub API allows 60 requests/hour per IP, and
+# CI runners share IPs. The real-network tests need a few calls each, so
+# with less quota than this they skip (honestly, with the reason) instead
+# of failing with "403 API rate limit exceeded" — which says nothing about
+# this project's code. Only quota exhaustion is skipped; any other failure
+# still fails.
+MIN_REMAINING_GITHUB_REQUESTS = 15
+
+
+def _github_unavailable_reason() -> str:
+    """"" when the real-network tests can run, else why they cannot."""
     try:
-        response = requests_lib.get("https://api.github.com", timeout=5)
-        return response.status_code < 500
+        # One request answers both questions, and /rate_limit itself does
+        # not count against the quota (a plain GET https://api.github.com does).
+        response = requests_lib.get("https://api.github.com/rate_limit", timeout=5)
+        if response.status_code >= 500:
+            return "api.github.com not reachable (REQUIRES EXTERNAL SERVICE)"
+        remaining = int(response.json()["resources"]["core"]["remaining"])
     except requests_lib.RequestException:
-        return False
+        return "api.github.com not reachable (REQUIRES EXTERNAL SERVICE)"
+    except (ValueError, KeyError, TypeError):
+        return ""  # unexpected shape: run the tests and let them report
+    if remaining < MIN_REMAINING_GITHUB_REQUESTS:
+        return f"GitHub API rate limit nearly exhausted for this IP ({remaining} left) (REQUIRES EXTERNAL SERVICE)"
+    return ""
 
 
-requires_network = pytest.mark.skipif(
-    not _network_available(), reason="api.github.com not reachable (REQUIRES EXTERNAL SERVICE)"
-)
+_UNAVAILABLE = _github_unavailable_reason()
+requires_network = pytest.mark.skipif(bool(_UNAVAILABLE), reason=_UNAVAILABLE or "available")

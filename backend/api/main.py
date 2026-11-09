@@ -51,12 +51,11 @@ from api.v1 import API_V1_PREFIX, build_v1_router
 logger = logging.getLogger("api")
 
 # CORS is opt-in via an explicit allowlist, never a wildcard default:
-# ALLOWED_ORIGINS is a comma-separated list of exact origins (e.g. a
-# future frontend's deployed URL). Empty by default — no frontend
-# exists yet (see docs/deployment.md's "Frontend" section), and an
-# empty allowlist means Starlette's CORSMiddleware simply never adds
-# CORS headers, which is the safest possible default for an API with
-# no known legitimate browser caller yet.
+# ALLOWED_ORIGINS is a comma-separated list of exact origins. Empty by
+# default, and an empty allowlist means Starlette's CORSMiddleware never
+# adds CORS headers. The Engineering Lab frontend does not need it: it is
+# a backend-for-frontend whose SERVER calls this API with
+# API_SERVICE_TOKEN, so no browser ever calls this API directly.
 _ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 
 
@@ -140,6 +139,12 @@ def create_app() -> FastAPI:
         redoc_url=None if is_production else "/redoc",
         openapi_url=None if is_production else "/openapi.json",
         lifespan=lifespan,
+        # F8: no automatic trailing-slash redirects. Pinned Starlette builds
+        # their Location from the client's Host header (PYSEC-2026-161), and
+        # they fire before authentication (no route has matched yet), so
+        # `Host: evil.example` produced `Location: http://evil.example/...`.
+        # The only caller (the frontend server) always uses exact paths.
+        redirect_slashes=False,
     )
 
     if _ALLOWED_ORIGINS:
@@ -148,7 +153,8 @@ def create_app() -> FastAPI:
             allow_origins=_ALLOWED_ORIGINS,
             allow_credentials=True,
             allow_methods=["GET", "POST"],
-            allow_headers=["*"],
+            # F8: only what an /api/v1 call needs, not every header.
+            allow_headers=["Authorization", "Content-Type"],
         )
 
     @app.get("/")
@@ -183,8 +189,12 @@ def create_app() -> FastAPI:
     async def no_store_for_api_v1(request: Request, call_next):
         response = await call_next(request)
         # API responses can carry repository source code: never let a
-        # browser or intermediary cache them.
-        if request.url.path.startswith(API_V1_PREFIX):
+        # browser or intermediary cache them. F8: decided on the raw ASGI
+        # path the router matches, NOT `request.url.path` — pinned
+        # Starlette rebuilds that from the client's Host header
+        # (PYSEC-2026-161/-248), so `Host: evil/x?` made it `/x` and
+        # skipped these headers (tests/api/test_f8_header_hardening.py).
+        if request.scope["path"].startswith(API_V1_PREFIX):
             response.headers["Cache-Control"] = "no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response
@@ -197,7 +207,7 @@ def create_app() -> FastAPI:
         # fixed, generic body. The real (still-redacted, per Phase 13's
         # Tracer/logging_config) detail goes to the server-side
         # structured log only.
-        logger.error("unhandled exception on %s", request.url.path, exc_info=True)
+        logger.error("unhandled exception on %s", request.scope["path"], exc_info=True)
         return JSONResponse(status_code=500, content={"error": "internal_server_error"})
 
     return app
