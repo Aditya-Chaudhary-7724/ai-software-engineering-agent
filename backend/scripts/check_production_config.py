@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import check_environment, feature_flags, missing_required_settings
+from config import check_environment, feature_flags, llm_configuration_problems, llm_provider_name, missing_required_settings
 
 
 def main() -> None:
@@ -52,10 +52,20 @@ def main() -> None:
     for flag in flags:
         print(f"  {flag.name:<{name_width}}  {'enabled' if flag.enabled else 'disabled'}")
 
+    # The provider NAME is not a secret; key values are never printed.
+    llm_problems = llm_configuration_problems()
+    print()
+    print(f"LLM provider: {llm_provider_name()}")
+    for problem in llm_problems:
+        print(f"  PROBLEM: {problem}")
+
     missing = missing_required_settings()
     print()
     if missing:
         print(f"FAILED: {len(missing)} required setting(s) missing: {', '.join(missing)}")
+        sys.exit(1)
+    if llm_problems:
+        print(f"FAILED: {len(llm_problems)} LLM configuration problem(s).")
         sys.exit(1)
 
     print("OK: all required settings are configured.")

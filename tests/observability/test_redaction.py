@@ -117,3 +117,9 @@ def test_non_dict_input_returns_empty_dict_rather_than_raising():
 
 def test_redact_text_never_raises():
     assert isinstance(redact_text("plain text"), str)
+
+
+def test_redacts_groq_key_shaped_value_under_an_innocuous_key():
+    result = sanitize_metadata({"message": "groq call failed with gsk_abcdefghijklmnopqrstuvwxyz0123"})
+    assert "gsk_" not in result["message"]
+    assert REDACTED_MARKER in result["message"]

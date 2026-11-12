@@ -74,6 +74,8 @@ const ASK_ERRORS = {
   ...SERVER_SIDE_MESSAGES,
   invalid_question: 'Enter a question (up to 2,000 characters).',
   repository_not_found: 'That repository no longer exists.',
+  llm_quota_exceeded: 'The free AI quota is used up for now. Try again in a few minutes.',
+  llm_not_configured: 'The AI provider is not configured on the server.',
   answer_generation_failed: 'The answer could not be generated (the LLM or embedding provider failed). Details are in the backend log.',
   database_unavailable: 'The database is unavailable.',
   backend_unreachable: 'The backend is not reachable.',

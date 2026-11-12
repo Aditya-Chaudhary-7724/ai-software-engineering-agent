@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { testOutcome } from '@/lib/agent-tasks';
-import { sandboxCapability } from '@/lib/capabilities';
+import { llmCapability, sandboxCapability } from '@/lib/capabilities';
 
 describe('testOutcome', () => {
   it('reports a disabled sandbox as not run, never as passed', () => {
@@ -44,5 +44,19 @@ describe('sandboxCapability', () => {
     expect(sandboxCapability({ sandbox_enabled: true, sandbox_docker_available: true, sandbox_image_available: true })).toEqual(['ok', 'ready']);
     expect(sandboxCapability({ sandbox_enabled: true, sandbox_docker_available: true, sandbox_image_available: false })).toEqual(['idle', 'image not built']);
     expect(sandboxCapability({ sandbox_enabled: true, sandbox_docker_available: false, sandbox_image_available: false })).toEqual(['idle', 'Docker unavailable']);
+  });
+});
+
+describe('llmCapability', () => {
+  it('names the real provider', () => {
+    expect(llmCapability({ llm_provider: 'groq', llm_provider_configured: true })).toEqual(['ok', 'groq']);
+  });
+  it('flags a misconfiguration as an error, not a stub', () => {
+    expect(llmCapability({ llm_provider: 'misconfigured', llm_provider_configured: false })[0]).toBe('err');
+  });
+  it('labels the stub as placeholder output, including from an older backend', () => {
+    expect(llmCapability({ llm_provider: 'stub', llm_provider_configured: false })).toEqual(['warn', 'stub (placeholder output)']);
+    expect(llmCapability({ llm_provider_configured: false })).toEqual(['warn', 'stub (placeholder output)']);
+    expect(llmCapability({ llm_provider_configured: true })).toEqual(['ok', 'provider configured']);
   });
 });

@@ -251,6 +251,8 @@ const ERRORS = {
   worker_interrupted: 'The backend stopped while this task was running.',
   database_unavailable: 'The database was unavailable.',
   schema_not_initialized: 'The database schema is not initialized (run backend/scripts/apply_schema.py).',
+  llm_quota_exceeded: 'The free AI quota ran out during this task, so it stopped. Nothing further was retried.',
+  llm_not_configured: 'The AI provider is not configured on the server.',
   internal_error: 'The task failed unexpectedly. Details are in the backend log.',
   unauthenticated: 'Your session has expired. Sign in again.',
   csrf_token_invalid: 'The request could not be verified. Reload the page and try again.',

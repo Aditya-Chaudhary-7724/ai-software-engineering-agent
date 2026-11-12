@@ -21,8 +21,7 @@ It is a POST only so the question travels in the body, not in URLs/logs.
 """
 
 import logging
-import os
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 import psycopg
 from fastapi import APIRouter, Depends
@@ -33,8 +32,8 @@ from graph.exceptions import MissingCredentialsError as Neo4jMissingCredentialsE
 from graph.queries import repository_exists
 from hybrid.service import HybridRAGService
 from jobs.ingestion import default_embedding_provider
-from rag.llm.base import LLMProvider
-from rag.llm.stub_provider import StubLLMProvider
+from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
+from rag.llm.factory import configured_llm_provider
 from vectorstore.store import VectorStore
 
 from api.dependencies import get_database_url, get_neo4j_client_factory, get_repository_record
@@ -64,14 +63,6 @@ class _NoGraphClient:
 
     def close(self) -> None:
         pass
-
-
-def default_llm_provider() -> Tuple[LLMProvider, str]:
-    if os.environ.get("LLM_API_KEY"):
-        from rag.llm.anthropic_provider import AnthropicLLMProvider
-
-        return AnthropicLLMProvider(), "anthropic"
-    return StubLLMProvider(), "stub"
 
 
 def _open_graph(client_factory, root_path: str):
@@ -122,7 +113,11 @@ def ask(
         raise APIError(422, "invalid_question")
 
     embedding_provider, embedding_name = default_embedding_provider()
-    llm_provider, llm_name = default_llm_provider()
+    try:
+        llm_provider, llm_name = configured_llm_provider()
+    except LLMConfigurationError:
+        logger.warning("ask refused: the LLM provider is misconfigured (see check_production_config.py)")
+        raise APIError(503, "llm_not_configured")
     graph_client, graph_status, graph_built = _open_graph(neo4j_client_factory, record.root_path)
 
     def run(client) -> Any:
@@ -141,6 +136,11 @@ def ask(
             # (the LLM is only called after retrieval, so it is not paid twice).
             graph_status, graph_built = "unavailable", None
             result = run(_NoGraphClient())
+    except LLMQuotaExceededError as exc:
+        # Free-tier rate limit / quota: an expected state, not a crash.
+        logger.warning("ask refused: LLM provider quota reached", extra={"retry_after_seconds": exc.retry_after_seconds})
+        headers = {"Retry-After": str(exc.retry_after_seconds)} if exc.retry_after_seconds else None
+        raise APIError(429, "llm_quota_exceeded", headers=headers)
     except psycopg.OperationalError:
         raise APIError(503, "database_unavailable")
     except psycopg.Error:

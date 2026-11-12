@@ -57,6 +57,7 @@ _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _SECRET_VALUE_PATTERNS = (
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),  # GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_
     re.compile(r"sk-[A-Za-z0-9]{20,}"),  # OpenAI/Anthropic-style secret keys
+    re.compile(r"gsk_[A-Za-z0-9]{20,}"),  # Groq API keys
     re.compile(r"[Bb]earer\s+[A-Za-z0-9._-]{10,}"),  # "Bearer <token>" header values
     re.compile(r"postgresql(\+\w+)?://[^/\s:]*:[^/\s@]+@"),  # a DB URL with an embedded password
 )

@@ -22,7 +22,6 @@ graph client that returns no rows (vector + keyword retrieval only).
 """
 
 import logging
-import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +44,8 @@ from jobs.ingestion import default_embedding_provider
 from observability.recorder import JSONFileRecorder
 from observability.tracer import Tracer
 from rag.llm.base import LLMProvider
-from rag.llm.stub_provider import StubLLMProvider
+from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
+from rag.llm.factory import configured_llm_provider
 from sandbox.base import TestRunner
 from sandbox.disabled_runner import configured_test_runner
 from vectorstore.embeddings.base import EmbeddingProvider
@@ -74,20 +74,12 @@ class _NoGraphClient:
         pass
 
 
-def default_llm_provider() -> Tuple[LLMProvider, str]:
-    if os.environ.get("LLM_API_KEY"):
-        from rag.llm.anthropic_provider import AnthropicLLMProvider
-
-        return AnthropicLLMProvider(), "anthropic"
-    return StubLLMProvider(), "stub"
-
-
 @dataclass
 class AgentTaskDependencies:
     database_url: str
     approval_ttl_seconds: int = DEFAULT_APPROVAL_TTL_SECONDS
     embedding_provider_factory: Callable[[], Tuple[EmbeddingProvider, str]] = default_embedding_provider
-    llm_provider_factory: Callable[[], Tuple[LLMProvider, str]] = default_llm_provider
+    llm_provider_factory: Callable[[], Tuple[LLMProvider, str]] = configured_llm_provider
     neo4j_client_factory: Callable[[], Any] = Neo4jClient
     # Docker only when SANDBOX_ENABLED=true (backend/config.py); otherwise
     # a runner that executes nothing and reports "sandbox disabled".
@@ -122,6 +114,14 @@ class AgentTaskExecutor:
         except UnsafeCheckpointDataError:
             logger.warning("agent task state refused by the checkpoint serializer", extra={"task_id": task.id})
             self._fail(task, "checkpoint_serialization_refused")
+        except LLMQuotaExceededError:
+            # Free-tier rate limit / quota. Nothing is retried automatically:
+            # a retry would spend quota, and an approval is never re-run.
+            logger.warning("agent task stopped: LLM provider quota reached", extra={"task_id": task.id})
+            self._fail(task, "llm_quota_exceeded")
+        except LLMConfigurationError:
+            logger.warning("agent task refused: the LLM provider is misconfigured", extra={"task_id": task.id})
+            self._fail(task, "llm_not_configured")
         except psycopg.OperationalError:
             logger.warning("agent task lost the database", extra={"task_id": task.id})
             self._fail(task, "database_unavailable")

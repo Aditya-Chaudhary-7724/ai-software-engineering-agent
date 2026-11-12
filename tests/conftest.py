@@ -70,3 +70,16 @@ def pytest_sessionstart(session):
             "point it at a disposable database (default: ai_swe_agent_test).",
             returncode=2,
         )
+
+
+# Settings that would make a test call a REAL hosted LLM. A developer's .env
+# (exported before running pytest) may set them; a test run must never spend
+# free-tier quota or credits by accident. Tests that need a provider set these
+# explicitly with monkeypatch and fake the network client.
+_REAL_LLM_SELECTORS = ("LLM_PROVIDER", "GROQ_API_KEY", "LLM_MODEL", "LLM_REASONING_EFFORT", "LLM_MAX_COMPLETION_TOKENS")
+
+
+@pytest.fixture(autouse=True)
+def _no_accidental_real_llm(monkeypatch):
+    for name in _REAL_LLM_SELECTORS:
+        monkeypatch.delenv(name, raising=False)

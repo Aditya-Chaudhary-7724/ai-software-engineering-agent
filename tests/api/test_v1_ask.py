@@ -260,3 +260,51 @@ def test_ask_requires_the_service_token(api_client, indexed_repo):
     assert response.status_code == 401
 
 
+
+
+def _use_groq(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_fake_key_must_not_leak_0000000000")
+    monkeypatch.setenv("LLM_MODEL", "vendor/model-id")
+
+
+def test_groq_answers_are_labelled_as_real_not_placeholder(api_client, indexed_repo, monkeypatch):
+    """No network: the provider's generate() is patched."""
+    from rag.llm.openai_compatible_provider import OpenAICompatibleLLMProvider
+
+    repository_id, _ = indexed_repo
+    _use_groq(monkeypatch)
+    monkeypatch.setattr(OpenAICompatibleLLMProvider, "generate", lambda self, prompt, system=None: "add_numbers returns a + b.")
+
+    body = _ask(api_client, repository_id, {"question": "add_numbers"}).json()
+
+    assert body["answer"] == {"text": "add_numbers returns a + b.", "generator": "groq", "is_placeholder": False}
+
+
+def test_a_provider_quota_error_is_a_429_with_retry_after(api_client, indexed_repo, monkeypatch):
+    from rag.llm.exceptions import LLMQuotaExceededError
+    from rag.llm.openai_compatible_provider import OpenAICompatibleLLMProvider
+
+    repository_id, _ = indexed_repo
+    _use_groq(monkeypatch)
+
+    def quota(self, prompt, system=None):
+        raise LLMQuotaExceededError("429 from https://api.example with gsk_fake_key_must_not_leak", retry_after_seconds=42)
+
+    monkeypatch.setattr(OpenAICompatibleLLMProvider, "generate", quota)
+    response = _ask(api_client, repository_id, {"question": "add_numbers"})
+
+    assert (response.status_code, response.json()) == (429, {"error": "llm_quota_exceeded"})
+    assert response.headers["retry-after"] == "42"
+    assert "gsk_" not in response.text and "api.example" not in response.text
+
+
+def test_a_misconfigured_provider_is_a_503_and_never_falls_back_to_the_stub(api_client, indexed_repo, monkeypatch):
+    repository_id, _ = indexed_repo
+    monkeypatch.setenv("LLM_PROVIDER", "groq")  # no key, no model
+    before = _db_snapshot()
+
+    response = _ask(api_client, repository_id, {"question": "add_numbers"})
+
+    assert (response.status_code, response.json()) == (503, {"error": "llm_not_configured"})
+    assert _db_snapshot() == before

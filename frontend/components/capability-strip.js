@@ -1,4 +1,4 @@
-import { sandboxCapability } from '@/lib/capabilities';
+import { llmCapability, sandboxCapability } from '@/lib/capabilities';
 
 import { StatusDot } from './ui';
 
@@ -16,7 +16,7 @@ export default function CapabilityStrip({ result }) {
   const items = [
     ['Database', c.database.ok ? 'ok' : 'err', c.database.detail],
     ['Graph', c.graph.ok ? (c.graph.detail.startsWith('not configured') ? 'idle' : 'ok') : 'err', c.graph.detail],
-    ['LLM', c.llm_provider_configured ? 'ok' : 'warn', c.llm_provider_configured ? 'provider configured' : 'stub (placeholder output)'],
+    ['LLM', ...llmCapability(c)],
     ['Embeddings', c.embedding_provider_configured ? 'ok' : 'warn', c.embedding_provider_configured ? 'provider configured' : 'local, non-semantic'],
     ['Sandbox', ...sandboxCapability(c)],
   ];

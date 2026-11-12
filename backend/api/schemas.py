@@ -25,6 +25,8 @@ class Capabilities(BaseModel):
     # Whether a real provider credential is configured — booleans only,
     # never a value. Without them the backend uses StubLLMProvider /
     # DeterministicLocalEmbeddingProvider (see backend/config.py).
+    # "anthropic" | "groq" | "stub" | "misconfigured" — a name, never a key.
+    llm_provider: str
     llm_provider_configured: bool
     embedding_provider_configured: bool
     github_token_configured: bool

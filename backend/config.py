@@ -49,6 +49,7 @@ OPTIONAL_SETTINGS: List[SettingSpec] = [
     SettingSpec("NEO4J_USERNAME", False, "Neo4j username — required together with NEO4J_URI and NEO4J_PASSWORD."),
     SettingSpec("NEO4J_PASSWORD", False, "Neo4j password — required together with NEO4J_URI and NEO4J_USERNAME."),
     SettingSpec("LLM_API_KEY", False, "Anthropic API key (Phase 4) — real LLM answers/modifications; StubLLMProvider is used without it."),
+    SettingSpec("GROQ_API_KEY", False, "Groq API key — required only when LLM_PROVIDER=groq (free tier; no card)."),
     SettingSpec("EMBEDDING_API_KEY", False, "OpenAI API key (Phase 3) — real semantic embeddings; DeterministicLocalEmbeddingProvider is used without it."),
     SettingSpec("GITHUB_TOKEN", False, "GitHub PAT (Phase 11) — required only for private repos, pushing, or opening PRs; public read-only access works without it."),
     SettingSpec("API_SERVICE_TOKEN", False, "Bearer token the frontend server uses to call /api/v1 (min 32 chars) — /api/v1 refuses all requests (503) without it; health endpoints are unaffected. Server-only; never exposed to a browser."),
@@ -72,6 +73,58 @@ def check_environment() -> List[SettingStatus]:
 
 def missing_required_settings() -> List[str]:
     return [status.name for status in check_environment() if status.required and not status.configured]
+
+
+# --- LLM provider selection -------------------------------------------------
+#
+# LLM_PROVIDER picks the provider explicitly: "anthropic", "groq" or "stub".
+# Unset keeps the original behaviour: Anthropic when LLM_API_KEY is set,
+# otherwise the StubLLMProvider. An unknown value, or a provider missing a
+# setting it needs, is a configuration PROBLEM: it is reported by
+# check_production_config.py (exit 1) and refused at call time, never
+# silently replaced by the stub.
+#
+# Groq: GROQ_API_KEY and LLM_MODEL are required. There is deliberately no
+# default model id: model ids and limits must be taken from the Groq
+# console, not hardcoded from third-party pages.
+LLM_PROVIDERS = ("anthropic", "groq", "stub")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+DEFAULT_LLM_MAX_COMPLETION_TOKENS = 2048
+MAX_LLM_MAX_COMPLETION_TOKENS = 32768
+
+
+def llm_provider_name() -> str:
+    """The provider that WILL be used (not validated; see
+    llm_configuration_problems). Not a secret."""
+    explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+    return "anthropic" if os.environ.get("LLM_API_KEY") else "stub"
+
+
+def llm_max_completion_tokens() -> int:
+    raw = os.environ.get("LLM_MAX_COMPLETION_TOKENS", "").strip()
+    return int(raw) if raw else DEFAULT_LLM_MAX_COMPLETION_TOKENS
+
+
+def llm_configuration_problems() -> List[str]:
+    """Human-readable problems with the LLM configuration. Names settings,
+    never their values."""
+    name = llm_provider_name()
+    if name not in LLM_PROVIDERS:
+        return [f"LLM_PROVIDER must be one of {', '.join(LLM_PROVIDERS)}"]
+    problems: List[str] = []
+    if name == "anthropic" and not os.environ.get("LLM_API_KEY"):
+        problems.append("LLM_PROVIDER=anthropic requires LLM_API_KEY")
+    if name == "groq":
+        if not os.environ.get("GROQ_API_KEY"):
+            problems.append("LLM_PROVIDER=groq requires GROQ_API_KEY")
+        if not os.environ.get("LLM_MODEL", "").strip():
+            problems.append("LLM_PROVIDER=groq requires LLM_MODEL (copy the model id from the Groq console)")
+        raw = os.environ.get("LLM_MAX_COMPLETION_TOKENS", "").strip()
+        if raw and not (raw.isdigit() and 1 <= int(raw) <= MAX_LLM_MAX_COMPLETION_TOKENS):
+            problems.append(f"LLM_MAX_COMPLETION_TOKENS must be an integer from 1 to {MAX_LLM_MAX_COMPLETION_TOKENS}")
+    return problems
 
 
 # Feature flags: NOT secrets, so (unlike the settings above) their
