@@ -13,6 +13,13 @@ class DockerUnavailableError(SandboxError):
     """
 
 
+class SandboxDisabledError(SandboxError):
+    """Raised when this deployment has the sandbox switched off
+    (SANDBOX_ENABLED is not "true"; see backend/config.py). Nothing was
+    executed. Callers must report the tests as NOT RUN, never as passed.
+    """
+
+
 class NoTestCommandError(SandboxError):
     """Raised when no supported test command could be detected for a
     repository. Only Python repositories using pytest are supported in

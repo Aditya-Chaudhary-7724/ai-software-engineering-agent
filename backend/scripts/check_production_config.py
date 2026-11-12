@@ -26,12 +26,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import check_environment, missing_required_settings
+from config import check_environment, feature_flags, missing_required_settings
 
 
 def main() -> None:
     statuses = check_environment()
-    name_width = max(len(status.name) for status in statuses)
+    flags = feature_flags()
+    name_width = max(len(name) for name in [status.name for status in statuses] + [flag.name for flag in flags])
 
     print("Configuration check (values are never printed):")
     print()
@@ -43,6 +44,13 @@ def main() -> None:
         else:
             label = "not set (optional)"
         print(f"  {status.name:<{name_width}}  {label}")
+
+    # Feature flags are not secrets: their effective state is printed.
+    print()
+    print("Feature flags (effective state):")
+    print()
+    for flag in flags:
+        print(f"  {flag.name:<{name_width}}  {'enabled' if flag.enabled else 'disabled'}")
 
     missing = missing_required_settings()
     print()

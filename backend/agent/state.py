@@ -91,6 +91,10 @@ class AgentState(TypedDict):
     test_stderr: Optional[str]
     test_exit_code: Optional[int]
     test_timed_out: Optional[bool]
+    # Why tests did NOT run, when they didn't: "sandbox_disabled" |
+    # "sandbox_unavailable" | "no_test_command". None once a run happened.
+    # Lets callers show "not run" explicitly; never implies a pass.
+    test_skipped_reason: Optional[str]
 
     final_response: Optional[str]
     sources: list
@@ -139,6 +143,7 @@ def initial_state(question: str, repository_id: int, root_path: str) -> AgentSta
         test_stderr=None,
         test_exit_code=None,
         test_timed_out=None,
+        test_skipped_reason=None,
         final_response=None,
         sources=[],
         execution_log=[],

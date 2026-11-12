@@ -309,3 +309,40 @@ def test_full_task_flow_over_http_with_the_real_agent(task_api, vector_store, re
     assert final["outcome"]["applied"] is True and final["outcome"]["changes_applied"] == 1
     assert final["proposal"]["state"] == "approved"
     assert (repo / "main.py").read_text() != ORIGINAL_CONTENT
+
+
+# -- SANDBOX_ENABLED off (the hosted-deployment default) ---------------------------
+
+
+def test_a_disabled_sandbox_applies_the_change_but_reports_tests_not_run(task_api, vector_store, repo):  # noqa: F811
+    """Full HTTP flow with the real graph and PostgresSaver, using the runner
+    the worker gets when SANDBOX_ENABLED is off: the approved change is
+    written, and the outcome says tests did NOT run, never that they passed."""
+    from sandbox.disabled_runner import DisabledTestRunner
+    from vectorstore.embeddings.local_provider import DeterministicLocalEmbeddingProvider
+    from vectorstore.service import IndexingService
+
+    client, _, _ = task_api
+    (repo / "test_main.py").write_text("def test_placeholder():\n    assert True\n")  # tests exist, but must not run
+    repository_id = IndexingService(DeterministicLocalEmbeddingProvider(), vector_store).index_repository(str(repo)).repository_id
+    store, executor = make_executor(test_runner=DisabledTestRunner())
+    worker = BackgroundWorker(store, executor, name="agent-test", recover=executor.recover_stale)
+
+    submitted = client.post(
+        f"{API_V1_PREFIX}/repositories/{repository_id}/agent-tasks", json={"instruction": MODIFY_INSTRUCTION}, headers=auth_headers()
+    ).json()
+    assert worker.run_once()
+    proposal = client.get(f"{TASKS}/{submitted['id']}", headers=auth_headers()).json()["proposal"]
+    assert _decide(client, submitted["id"], interrupt_id=proposal["interrupt_id"], diff_sha256=proposal["diff_sha256"]).status_code == 202
+    assert worker.run_once()
+
+    final = client.get(f"{TASKS}/{submitted['id']}", headers=auth_headers()).json()
+    assert final["status"] == "completed", final["error_code"]
+    assert final["outcome"]["applied"] is True
+    assert final["outcome"]["test_ran"] is False
+    assert final["outcome"]["test_passed"] is None
+    assert final["outcome"]["test_skipped_reason"] == "sandbox_disabled"
+    assert "Tests not run: sandbox disabled in this deployment." in final["final_response"]
+    assert "not verified" in final["final_response"]
+    assert "Tests: passed" not in final["final_response"]
+    assert any("Sandbox disabled" in entry for entry in final["execution_log"])

@@ -28,6 +28,9 @@ class Capabilities(BaseModel):
     llm_provider_configured: bool
     embedding_provider_configured: bool
     github_token_configured: bool
+    # SANDBOX_ENABLED (backend/config.py). When false, Docker is not even
+    # probed and both sandbox_* fields below are false.
+    sandbox_enabled: bool
     sandbox_docker_available: bool
     sandbox_image_available: bool
     # Which operations this API version actually exposes. Anything false
@@ -273,6 +276,9 @@ class AgentTaskOutcome(BaseModel):
     changes_applied: int
     test_ran: bool
     test_passed: Optional[bool]
+    # Set only when tests did NOT run: "sandbox_disabled" |
+    # "sandbox_unavailable" | "no_test_command". Never implies a pass.
+    test_skipped_reason: Optional[str] = None
 
 
 class AgentTaskProposal(BaseModel):

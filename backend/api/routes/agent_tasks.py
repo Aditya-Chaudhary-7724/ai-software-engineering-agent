@@ -203,6 +203,7 @@ def to_api(task: task_models.AgentTask, now: Optional[datetime] = None) -> Agent
             changes_applied=int(outcome.get("changes_applied") or 0),
             test_ran=bool(outcome.get("test_ran")),
             test_passed=outcome.get("test_passed"),
+            test_skipped_reason=outcome.get("test_skipped_reason"),
         ),
         proposal=proposal,
         approvals_granted=task.approvals_granted,

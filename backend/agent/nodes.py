@@ -34,7 +34,7 @@ from modification.models import ProposedChange
 from modification.service import ModificationService
 
 from sandbox.base import TestRunner
-from sandbox.exceptions import DockerUnavailableError, NoTestCommandError
+from sandbox.exceptions import DockerUnavailableError, NoTestCommandError, SandboxDisabledError
 from sandbox.models import TestRunResult
 
 from agent.approval import diff_sha256, is_bound_approval
@@ -192,7 +192,12 @@ def _test_result_fields(result: TestRunResult) -> dict:
         "test_stderr": result.stderr,
         "test_exit_code": result.exit_code,
         "test_timed_out": result.timed_out,
+        "test_skipped_reason": None,
     }
+
+
+# Shown verbatim to the operator; the wording must never read as a pass.
+SANDBOX_DISABLED_MESSAGE = "Tests not run: sandbox disabled in this deployment."
 
 
 def _test_summary_word(result: TestRunResult) -> str:
@@ -211,12 +216,24 @@ def make_test_node(test_runner: TestRunner):
                 "execution currently supports Python repositories using pytest (Phase 10)."
             )
             return {
+                "test_ran": False,
+                "test_skipped_reason": "no_test_command",
                 "final_response": message,
                 "sources": [],
                 "execution_log": ["Test execution requested but no supported test command was detected."],
             }
+        except SandboxDisabledError:
+            return {
+                "test_ran": False,
+                "test_skipped_reason": "sandbox_disabled",
+                "final_response": SANDBOX_DISABLED_MESSAGE,
+                "sources": [],
+                "execution_log": ["Test execution requested but the sandbox is disabled in this deployment."],
+            }
         except DockerUnavailableError as exc:
             return {
+                "test_ran": False,
+                "test_skipped_reason": "sandbox_unavailable",
                 "final_response": f"Could not run tests: {exc}",
                 "sources": [],
                 "execution_log": [f"Test execution requested but the sandbox is unavailable: {exc}"],
@@ -395,6 +412,7 @@ def make_run_tests_after_apply_node(test_runner: TestRunner):
         except NoTestCommandError:
             return {
                 "test_ran": False,
+                "test_skipped_reason": "no_test_command",
                 "should_retry_fix": False,
                 "loop_deadline": deadline,
                 "final_response": (
@@ -403,9 +421,22 @@ def make_run_tests_after_apply_node(test_runner: TestRunner):
                 ),
                 "execution_log": ["No supported test command detected; skipping test verification."],
             }
+        except SandboxDisabledError:
+            return {
+                "test_ran": False,
+                "test_skipped_reason": "sandbox_disabled",
+                "should_retry_fix": False,
+                "loop_deadline": deadline,
+                "final_response": (
+                    f"{state['final_response']}\n\n{SANDBOX_DISABLED_MESSAGE} "
+                    "The change was applied but not verified."
+                ),
+                "execution_log": ["Sandbox disabled in this deployment; skipping test verification."],
+            }
         except DockerUnavailableError as exc:
             return {
                 "test_ran": False,
+                "test_skipped_reason": "sandbox_unavailable",
                 "should_retry_fix": False,
                 "loop_deadline": deadline,
                 "final_response": f"{state['final_response']}\n\nTests: could not run ({exc}).",

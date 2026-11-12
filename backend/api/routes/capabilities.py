@@ -11,6 +11,7 @@ import subprocess
 
 from fastapi import APIRouter, Request
 
+import config
 from api.health import check_readiness
 from api.schemas import Capabilities, DependencyCapability
 from evaluation.environment import docker_available
@@ -52,7 +53,9 @@ def _worker_running(request: Request, attribute: str) -> bool:
 @router.get("/capabilities", response_model=Capabilities)
 def get_capabilities(request: Request) -> Capabilities:
     readiness = {d.name: d for d in check_readiness().dependencies}
-    docker_ok = docker_available()
+    sandbox_on = config.sandbox_enabled()
+    # Disabled means disabled: don't shell out to Docker at all.
+    docker_ok = sandbox_on and docker_available()
     return Capabilities(
         api_version="v1",
         database=DependencyCapability(ok=readiness["postgres"].ok, detail=readiness["postgres"].detail),
@@ -60,6 +63,7 @@ def get_capabilities(request: Request) -> Capabilities:
         llm_provider_configured=bool(os.environ.get("LLM_API_KEY")),
         embedding_provider_configured=bool(os.environ.get("EMBEDDING_API_KEY")),
         github_token_configured=bool(os.environ.get("GITHUB_TOKEN")),
+        sandbox_enabled=sandbox_on,
         sandbox_docker_available=docker_ok,
         sandbox_image_available=docker_ok and _sandbox_image_available(),
         features={

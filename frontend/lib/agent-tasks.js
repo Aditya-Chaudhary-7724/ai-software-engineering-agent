@@ -111,6 +111,27 @@ export function changeSummary(task) {
   }
 }
 
+const TEST_SKIPPED_TEXT = {
+  sandbox_disabled: 'not run: sandbox disabled in this deployment',
+  sandbox_unavailable: 'not run: sandbox unavailable',
+  no_test_command: 'not run: no supported test command',
+};
+
+/**
+ * Sandbox test result for the task summary, or null when tests were never
+ * reached (e.g. an answer, or a rejected change). Only `test_ran` with
+ * `test_passed === true` reads as passed; every "not run" is a warning,
+ * never a pass.
+ */
+export function testOutcome(outcome) {
+  if (outcome?.test_ran) {
+    return outcome.test_passed === true ? { text: 'passed', tone: 'ok' } : { text: 'failed', tone: 'err' };
+  }
+  const reason = outcome?.test_skipped_reason;
+  if (!reason) return null;
+  return { text: TEST_SKIPPED_TEXT[reason] ?? 'not run', tone: 'warn' };
+}
+
 export function proposalStateLabel(state) {
   return (
     {

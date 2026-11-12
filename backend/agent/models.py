@@ -23,6 +23,9 @@ class AgentRunResult:
     applied: Optional[bool] = None
     test_ran: bool = False
     test_passed: Optional[bool] = None
+    # Why tests did not run (see agent/state.py); None if they ran or were
+    # never reached.
+    test_skipped_reason: Optional[str] = None
 
     def approval_binding(self) -> dict:
         """Keyword arguments binding a decision to THIS pending approval:

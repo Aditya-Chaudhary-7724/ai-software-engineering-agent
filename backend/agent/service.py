@@ -152,6 +152,7 @@ class AgentService:
             applied=result.get("applied"),
             test_ran=bool(result.get("test_ran")),
             test_passed=result.get("test_passed"),
+            test_skipped_reason=result.get("test_skipped_reason"),
         )
 
 

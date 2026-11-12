@@ -72,3 +72,39 @@ def check_environment() -> List[SettingStatus]:
 
 def missing_required_settings() -> List[str]:
     return [status.name for status in check_environment() if status.required and not status.configured]
+
+
+# Feature flags: NOT secrets, so (unlike the settings above) their
+# effective value may be reported. Each is fail-closed: only the exact
+# value "true" (case-insensitive) turns the feature on.
+#
+# SANDBOX_ENABLED: whether the API's agent worker may run repository tests
+# in the Docker sandbox (Phase 10). Default OFF. A hosted deployment must
+# leave it off: the API image deliberately has no Docker CLI, and the API
+# container must never be given the Docker socket (docs/deployment.md
+# section 7). When off, agent tasks still propose/apply approved changes
+# but report "tests not run: sandbox disabled in this deployment", never
+# a verified result. Developer scripts that construct DockerTestRunner
+# directly (backend/scripts/manual_*.py, evaluation) are not affected.
+SANDBOX_ENABLED_ENV_VAR = "SANDBOX_ENABLED"
+
+
+@dataclass(frozen=True)
+class FeatureFlagStatus:
+    name: str
+    enabled: bool
+    description: str
+
+
+def sandbox_enabled() -> bool:
+    return os.environ.get(SANDBOX_ENABLED_ENV_VAR, "").strip().lower() == "true"
+
+
+def feature_flags() -> List[FeatureFlagStatus]:
+    return [
+        FeatureFlagStatus(
+            SANDBOX_ENABLED_ENV_VAR,
+            sandbox_enabled(),
+            "Run agent-task tests in the Docker sandbox (default off; keep off in hosted deployments).",
+        ),
+    ]

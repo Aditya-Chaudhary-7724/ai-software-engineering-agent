@@ -141,6 +141,8 @@ Verified, each backed by a test:
 | No Docker socket access | The constructed command is inspected directly: exactly one `-v` mount (the workspace), never `docker.sock` |
 | Workspace confinement (copy, not the real repo) | Real container writes a file; confirmed absent from the original host directory |
 
+**Explicit switch (2026-11-12): `SANDBOX_ENABLED`, default off.** The API's agent worker runs tests only when it is exactly `true`; otherwise it uses `sandbox.disabled_runner.DisabledTestRunner`, which starts no process and raises `SandboxDisabledError`. Previously a deployment had no sandbox only because the API image lacked a Docker CLI, so a Docker CLI and socket appearing would have silently enabled untrusted test execution. A disabled sandbox is reported as `test_ran: false`, `test_skipped_reason: "sandbox_disabled"` and "Tests not run: sandbox disabled in this deployment." — never as passed — and `/api/v1/capabilities` does not probe Docker at all. Tests: `tests/sandbox/test_sandbox_flag.py`, `tests/api/test_v1_agent_tasks.py::test_a_disabled_sandbox_applies_the_change_but_reports_tests_not_run`, `frontend/tests/sandbox-status.test.js`.
+
 ## 10. GitHub Integration
 
 **Status: Implemented**, with two real validation gaps found by adversarial testing and fixed this phase.

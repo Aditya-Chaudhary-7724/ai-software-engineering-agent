@@ -47,7 +47,7 @@ from observability.tracer import Tracer
 from rag.llm.base import LLMProvider
 from rag.llm.stub_provider import StubLLMProvider
 from sandbox.base import TestRunner
-from sandbox.docker_runner import DockerTestRunner
+from sandbox.disabled_runner import configured_test_runner
 from vectorstore.embeddings.base import EmbeddingProvider
 from vectorstore.store import VectorStore
 
@@ -89,7 +89,9 @@ class AgentTaskDependencies:
     embedding_provider_factory: Callable[[], Tuple[EmbeddingProvider, str]] = default_embedding_provider
     llm_provider_factory: Callable[[], Tuple[LLMProvider, str]] = default_llm_provider
     neo4j_client_factory: Callable[[], Any] = Neo4jClient
-    test_runner_factory: Callable[[], TestRunner] = DockerTestRunner
+    # Docker only when SANDBOX_ENABLED=true (backend/config.py); otherwise
+    # a runner that executes nothing and reports "sandbox disabled".
+    test_runner_factory: Callable[[], TestRunner] = configured_test_runner
     tracer_factory: Callable[[], Tracer] = lambda: Tracer(JSONFileRecorder())
 
 
@@ -240,4 +242,5 @@ def _outcome(result: AgentRunResult, generator: str) -> Dict[str, Optional[Any]]
         "applied": result.applied,
         "test_ran": result.test_ran,
         "test_passed": result.test_passed,
+        "test_skipped_reason": result.test_skipped_reason,
     }

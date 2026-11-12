@@ -1,3 +1,5 @@
+import { sandboxCapability } from '@/lib/capabilities';
+
 import { StatusDot } from './ui';
 
 /** One-line, real-data summary of what this deployment can do right now. */
@@ -16,7 +18,7 @@ export default function CapabilityStrip({ result }) {
     ['Graph', c.graph.ok ? (c.graph.detail.startsWith('not configured') ? 'idle' : 'ok') : 'err', c.graph.detail],
     ['LLM', c.llm_provider_configured ? 'ok' : 'warn', c.llm_provider_configured ? 'provider configured' : 'stub (placeholder output)'],
     ['Embeddings', c.embedding_provider_configured ? 'ok' : 'warn', c.embedding_provider_configured ? 'provider configured' : 'local, non-semantic'],
-    ['Sandbox', c.sandbox_image_available ? 'ok' : 'idle', c.sandbox_image_available ? 'ready' : c.sandbox_docker_available ? 'image not built' : 'Docker unavailable'],
+    ['Sandbox', ...sandboxCapability(c)],
   ];
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-rule px-6 py-2 text-xs">

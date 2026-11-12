@@ -17,6 +17,7 @@ import {
   shouldPoll,
   statusLabel,
   statusTone,
+  testOutcome,
 } from '@/lib/agent-tasks';
 import { citationHref, foundViaLabel } from '@/lib/ask';
 import { formatTimestamp } from '@/lib/format';
@@ -35,6 +36,9 @@ import { Panel, StatusDot, Tag } from './ui';
  * includes the browser's own SHA-256 of the displayed diff matching the
  * server's. All agent output is rendered as plain React text.
  */
+// Literal class names so Tailwind's source scan sees them.
+const TONE_TEXT_CLASS = { ok: 'text-ok', err: 'text-err', warn: 'text-warn' };
+
 export default function AgentTaskView({ initialTask, csrfToken, repositoryName }) {
   const [task, setTask] = useState(initialTask);
   const [failures, setFailures] = useState(0);
@@ -120,6 +124,7 @@ export default function AgentTaskView({ initialTask, csrfToken, repositoryName }
   }
 
   const summary = changeSummary(task);
+  const tests = testOutcome(task.outcome);
   const summaryStyle = {
     ok: 'border-ok bg-ok/5 text-ok',
     warn: 'border-warn bg-warn/5 text-warn',
@@ -169,10 +174,10 @@ export default function AgentTaskView({ initialTask, csrfToken, repositoryName }
               <dd className="font-mono text-xs">{formatTimestamp(task.finished_at)}</dd>
             </>
           ) : null}
-          {task.outcome.test_ran ? (
+          {tests ? (
             <>
               <dt className="text-ink-muted">Sandbox tests</dt>
-              <dd className={task.outcome.test_passed ? 'text-ok' : 'text-err'}>{task.outcome.test_passed ? 'passed' : 'failed'}</dd>
+              <dd className={TONE_TEXT_CLASS[tests.tone]}>{tests.text}</dd>
             </>
           ) : null}
         </dl>

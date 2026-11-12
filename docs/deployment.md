@@ -173,6 +173,8 @@ This is the single most important production-architecture decision in this phase
 
 **Update (F8): agent tasks in the API container.** The agent worker runs inside the API process, and the API image deliberately has no Docker CLI or socket. So in a containerised deployment, an approved change is **applied but its tests cannot run**. The task's response says so explicitly ("Tests: could not run (Docker is not available…)"), and the capability strip shows the sandbox as unavailable. It is never reported as verified. Running tests in production needs the dedicated sandbox-worker service described above, an architecture decision not made in F8. Mounting `/var/run/docker.sock` into the API container would give the process holding every credential root-equivalent control of the host: **do not.**
 
+**Update (2026-11-12): explicit `SANDBOX_ENABLED` flag, default off.** The paragraph above describes degradation by *absence* (no Docker CLI in the image). It is now also an explicit decision: unless `SANDBOX_ENABLED=true`, the agent worker uses `DisabledTestRunner`, which executes nothing. An approved change is still applied; the task outcome is `test_ran: false`, `test_skipped_reason: "sandbox_disabled"`, the response says "Tests not run: sandbox disabled in this deployment. The change was applied but not verified.", and the UI shows "Sandbox tests: not run: sandbox disabled in this deployment" (warning tone) and "Sandbox: disabled in this deployment" in the capability strip. `check_production_config.py` prints the flag's effective state. **Hosted deployments keep it off.** Local development with Docker needs `SANDBOX_ENABLED=true` in `.env` to keep running agent-task tests. Developer scripts and the evaluation CLI construct `DockerTestRunner` directly and are not affected.
+
 **Update (F8): untrusted code no longer runs as root.** The sandbox image has no `USER`, so before F8 repository code ran as uid 0 inside the container (verified: `os.getuid()` printed `0`). `DockerTestRunner` now passes `--user <invoking uid>:<gid>`, or `65534:65534` (`nobody`) if the app itself runs as root. This also avoids root-owned files in the bind-mounted workspace on Linux hosts. Tested against a real container: `tests/security/test_docker_sandbox_security.py::test_untrusted_code_runs_without_root_and_can_still_use_its_workspace`.
 
 ## 8. Secrets / Environment Management
@@ -201,7 +203,7 @@ Verified this phase:
 - No secret appears in an observability trace or log line (Phase 13/14's `observability.redaction`, reused — not re-implemented — by `backend/api/health.py`'s own "never echo the raw exception" choice).
 - Production secrets are expected to be injected by whatever platform hosts the container (its own secret manager / environment variable injection) — never a file shipped in the image.
 
-**Update (F8): variables added since Phase 15.** `API_SERVICE_TOKEN` (server secret, ≥ 32 chars, shared with the frontend), `WORKSPACE_ROOT` (absolute, dedicated clone directory), `INGESTION_WORKER_ENABLED`, `INGESTION_MAX_REPOSITORY_KB`, `AGENT_WORKER_ENABLED`, `AGENT_APPROVAL_TTL_SECONDS` (config), and `EVALUATION_DATABASE_URL` (evaluation only, never read by the API). Frontend variables are listed in section 3. `.env.example` and `frontend/.env.example` hold placeholders only. `check_production_config.py` reports set/unset only; F8 did not change it.
+**Update (F8): variables added since Phase 15.** `API_SERVICE_TOKEN` (server secret, ≥ 32 chars, shared with the frontend), `WORKSPACE_ROOT` (absolute, dedicated clone directory), `INGESTION_WORKER_ENABLED`, `INGESTION_MAX_REPOSITORY_KB`, `AGENT_WORKER_ENABLED`, `AGENT_APPROVAL_TTL_SECONDS`, `SANDBOX_ENABLED` (config; default off, see section 7), and `EVALUATION_DATABASE_URL` (evaluation only, never read by the API). Frontend variables are listed in section 3. `.env.example` and `frontend/.env.example` hold placeholders only. `check_production_config.py` reports set/unset only for settings (never a value), and, since 2026-11-12, the effective enabled/disabled state of feature flags (`SANDBOX_ENABLED`), which are not secrets.
 
 ## 9. Health / Readiness
 
@@ -330,7 +332,7 @@ Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicat
 ## 19. Known Limitations (as of F8)
 
 - **Not deployed anywhere.** The CI workflow has **not yet been verified on GitHub Actions** (never run there).
-- **Tests do not run for agent tasks in a containerised API** (no Docker in the API image by design). Changes are applied and reported as unverified (section 7).
+- **Tests do not run for agent tasks in a containerised API** (no Docker in the API image by design, and `SANDBOX_ENABLED` defaults to off). Changes are applied and reported as "tests not run", never verified (section 7).
 - **20 Python advisories accepted, with reasons** (section 12). The real fix needs Python 3.11 locally plus fastapi/requests and langgraph upgrades.
 - **Rollback of an applied agent change is not implemented.** An approved change is written to the clone; a failing test after approval is reported as such, never undone (`docs/evaluation.md` → "No rollback"; asserted by the `modsafety-failed-tests-no-rollback` evaluation case).
 - **Single operator, no per-user authorization.** Ownership checks are "this task belongs to this repository", not "this user owns it".
