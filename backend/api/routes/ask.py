@@ -33,7 +33,7 @@ from graph.queries import repository_exists
 from hybrid.service import HybridRAGService
 from jobs.ingestion import default_embedding_provider
 from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
-from vectorstore.exceptions import EmbeddingConfigurationError
+from vectorstore.exceptions import EmbeddingConfigurationError, ReindexRequiredError
 from rag.llm.factory import configured_llm_provider
 from vectorstore.store import VectorStore
 
@@ -80,28 +80,6 @@ def _open_graph(client_factory, root_path: str):
         return _NoGraphClient(), "unavailable", None
 
 
-def _indexed_with_provider(database_url: str, repository_id: int) -> Optional[str]:
-    """Embedding provider recorded by the repository's latest completed
-    ingestion job (F3), if any — used only to warn about a mismatch."""
-    try:
-        conn = psycopg.connect(database_url, connect_timeout=5)
-    except psycopg.OperationalError:
-        return None
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT progress->>'embedding_provider' FROM jobs WHERE repository_id = %s AND status = 'completed' "
-                "ORDER BY finished_at DESC LIMIT 1",
-                (repository_id,),
-            )
-            row = cur.fetchone()
-        return row[0] if row else None
-    except psycopg.Error:
-        return None
-    finally:
-        conn.close()
-
-
 @router.post("/repositories/{repository_id}/ask", response_model=AskResponse)
 def ask(
     request: AskRequest,
@@ -141,6 +119,12 @@ def ask(
             # (the LLM is only called after retrieval, so it is not paid twice).
             graph_status, graph_built = "unavailable", None
             result = run(_NoGraphClient())
+    except ReindexRequiredError as exc:
+        # Indexed with a different (or unrecorded) embedding model: comparing
+        # vectors across models gives meaningless matches, so refuse. This
+        # replaces the old warning-only check, which still answered.
+        logger.warning("ask refused: repository needs re-indexing", extra={"repository_id": exc.repository_id})
+        raise APIError(409, "reindex_required")
     except LLMQuotaExceededError as exc:
         # Free-tier rate limit / quota: an expected state, not a crash.
         logger.warning("ask refused: LLM provider quota reached", extra={"retry_after_seconds": exc.retry_after_seconds})
@@ -160,9 +144,6 @@ def ask(
     warnings: List[str] = []
     if result.context_chunk_count == 0:
         warnings.append("no_relevant_context")
-    indexed_with = _indexed_with_provider(database_url, record.id)
-    if indexed_with and indexed_with != embedding_name:
-        warnings.append("embedding_provider_mismatch")
 
     return AskResponse(
         repository_id=record.id,

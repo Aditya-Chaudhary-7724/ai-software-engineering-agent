@@ -31,6 +31,7 @@ def make_search_code(
             vector_hits = vector_store.similarity_search(
                 conn,
                 query_embedding,
+                embedding_model=embedding_provider.model_id,
                 top_k=input_data.top_k,
                 repository_id=input_data.repository_id,
                 language=input_data.language,

@@ -53,6 +53,7 @@ class RAGService:
             vector_hits = self._vector_store.similarity_search(
                 conn,
                 query_embedding,
+                embedding_model=self._embedding_provider.model_id,
                 top_k=self._vector_top_k,
                 repository_id=repository_id,
                 language=language,

@@ -21,7 +21,9 @@ def find_affected_file(
     conn = vector_store.connect()
     try:
         query_embedding = embedding_provider.embed([instruction])[0]
-        vector_hits = vector_store.similarity_search(conn, query_embedding, top_k=5, repository_id=repository_id)
+        vector_hits = vector_store.similarity_search(
+            conn, query_embedding, top_k=5, repository_id=repository_id, embedding_model=embedding_provider.model_id
+        )
         keyword_hits = keyword_search(conn, instruction, top_k=5, repository_id=repository_id)
     finally:
         conn.close()

@@ -75,7 +75,11 @@ def make_repository_search_node(vector_store: VectorStore, embedding_provider: E
         try:
             query_embedding = embedding_provider.embed([state["question"]])[0]
             vector_hits = vector_store.similarity_search(
-                conn, query_embedding, top_k=state["vector_top_k"], repository_id=state["repository_id"]
+                conn,
+                query_embedding,
+                top_k=state["vector_top_k"],
+                repository_id=state["repository_id"],
+                embedding_model=embedding_provider.model_id,
             )
             keyword_hits = keyword_search(
                 conn, state["question"], top_k=state["keyword_top_k"], repository_id=state["repository_id"]

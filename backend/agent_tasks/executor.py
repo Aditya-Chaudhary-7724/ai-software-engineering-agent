@@ -46,7 +46,7 @@ from observability.tracer import Tracer
 from rag.llm.base import LLMProvider
 from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
 from rag.llm.factory import configured_llm_provider
-from vectorstore.exceptions import EmbeddingConfigurationError
+from vectorstore.exceptions import EmbeddingConfigurationError, ReindexRequiredError
 from sandbox.base import TestRunner
 from sandbox.disabled_runner import configured_test_runner
 from vectorstore.embeddings.base import EmbeddingProvider
@@ -123,6 +123,9 @@ class AgentTaskExecutor:
         except LLMConfigurationError:
             logger.warning("agent task refused: the LLM provider is misconfigured", extra={"task_id": task.id})
             self._fail(task, "llm_not_configured")
+        except ReindexRequiredError:
+            logger.warning("agent task refused: repository needs re-indexing", extra={"task_id": task.id})
+            self._fail(task, "reindex_required")
         except EmbeddingConfigurationError:
             logger.warning("agent task refused: the embedding provider is misconfigured", extra={"task_id": task.id})
             self._fail(task, "embedding_not_configured")

@@ -56,6 +56,7 @@ class FastEmbedEmbeddingProvider(EmbeddingProvider):
     ) -> None:
         self.model_name = model_name
         self.dimension = dimension
+        self.model_id = f"fastembed:{model_name}"
         self._hf_repo = hf_repo
         self._hf_revision = hf_revision
         self._batch_size = batch_size

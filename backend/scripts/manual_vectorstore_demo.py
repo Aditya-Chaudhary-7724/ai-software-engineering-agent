@@ -73,7 +73,7 @@ def main() -> None:
         conn = store.connect()
         try:
             hits = store.similarity_search(
-                conn, query_embedding, top_k=5, repository_id=result.repository_id
+                conn, query_embedding, top_k=5, repository_id=result.repository_id, embedding_model=provider.model_id
             )
             print(f"Query: {query!r}")
             print("Nearest chunks (distance is hash-based, not semantic):")

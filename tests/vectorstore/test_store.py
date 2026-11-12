@@ -30,8 +30,8 @@ def _chunk(symbol_name: str, content: str) -> CodeChunk:
 def test_get_or_create_repository_is_idempotent(vector_store):
     conn = vector_store.connect()
     try:
-        first_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo")
-        second_id = vector_store.get_or_create_repository(conn, "demo-renamed", "/tmp/demo")
+        first_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo", embedding_model=PROVIDER.model_id)
+        second_id = vector_store.get_or_create_repository(conn, "demo-renamed", "/tmp/demo", embedding_model=PROVIDER.model_id)
         assert first_id == second_id
     finally:
         conn.close()
@@ -41,13 +41,13 @@ def test_get_or_create_repository_is_idempotent(vector_store):
 def test_insert_and_exact_match_search_returns_zero_distance(vector_store):
     conn = vector_store.connect()
     try:
-        repo_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo")
+        repo_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo", embedding_model=PROVIDER.model_id)
         chunks = [_chunk("add", "def add(a, b):\n    return a + b")]
         embeddings = PROVIDER.embed([c.content for c in chunks])
         vector_store.insert_chunks(conn, repo_id, chunks, embeddings)
 
         query_embedding = PROVIDER.embed(["def add(a, b):\n    return a + b"])[0]
-        results = vector_store.similarity_search(conn, query_embedding, top_k=1)
+        results = vector_store.similarity_search(conn, query_embedding, top_k=1, embedding_model=PROVIDER.model_id)
 
         assert len(results) == 1
         assert results[0].symbol_name == "add"
@@ -60,13 +60,13 @@ def test_insert_and_exact_match_search_returns_zero_distance(vector_store):
 def test_similarity_search_orders_by_distance(vector_store):
     conn = vector_store.connect()
     try:
-        repo_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo")
+        repo_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo", embedding_model=PROVIDER.model_id)
         chunks = [_chunk("add", "def add(a, b): return a + b"), _chunk("sub", "def sub(a, b): return a - b")]
         embeddings = PROVIDER.embed([c.content for c in chunks])
         vector_store.insert_chunks(conn, repo_id, chunks, embeddings)
 
         query_embedding = PROVIDER.embed(["def add(a, b): return a + b"])[0]
-        results = vector_store.similarity_search(conn, query_embedding, top_k=2)
+        results = vector_store.similarity_search(conn, query_embedding, top_k=2, embedding_model=PROVIDER.model_id)
 
         assert [r.symbol_name for r in results] == ["add", "sub"]
         assert results[0].distance <= results[1].distance
@@ -78,8 +78,8 @@ def test_similarity_search_orders_by_distance(vector_store):
 def test_similarity_search_metadata_filtering_by_repository(vector_store):
     conn = vector_store.connect()
     try:
-        repo_a = vector_store.get_or_create_repository(conn, "repo-a", "/tmp/repo-a")
-        repo_b = vector_store.get_or_create_repository(conn, "repo-b", "/tmp/repo-b")
+        repo_a = vector_store.get_or_create_repository(conn, "repo-a", "/tmp/repo-a", embedding_model=PROVIDER.model_id)
+        repo_b = vector_store.get_or_create_repository(conn, "repo-b", "/tmp/repo-b", embedding_model=PROVIDER.model_id)
 
         chunk = _chunk("add", "def add(a, b): return a + b")
         embedding = PROVIDER.embed([chunk.content])
@@ -87,7 +87,7 @@ def test_similarity_search_metadata_filtering_by_repository(vector_store):
         vector_store.insert_chunks(conn, repo_b, [chunk], embedding)
 
         query_embedding = PROVIDER.embed([chunk.content])[0]
-        results = vector_store.similarity_search(conn, query_embedding, top_k=10, repository_id=repo_a)
+        results = vector_store.similarity_search(conn, query_embedding, top_k=10, repository_id=repo_a, embedding_model=PROVIDER.model_id)
 
         assert len(results) == 1
     finally:
@@ -98,7 +98,7 @@ def test_similarity_search_metadata_filtering_by_repository(vector_store):
 def test_similarity_search_metadata_filtering_by_chunk_type(vector_store):
     conn = vector_store.connect()
     try:
-        repo_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo")
+        repo_id = vector_store.get_or_create_repository(conn, "demo", "/tmp/demo", embedding_model=PROVIDER.model_id)
         func_chunk = _chunk("add", "def add(a, b): return a + b")
         class_chunk = CodeChunk(
             relative_path="main.py",
@@ -114,7 +114,7 @@ def test_similarity_search_metadata_filtering_by_chunk_type(vector_store):
         vector_store.insert_chunks(conn, repo_id, [func_chunk, class_chunk], embeddings)
 
         query_embedding = PROVIDER.embed(["anything"])[0]
-        results = vector_store.similarity_search(conn, query_embedding, top_k=10, chunk_type="class")
+        results = vector_store.similarity_search(conn, query_embedding, top_k=10, chunk_type="class", embedding_model=PROVIDER.model_id)
 
         assert len(results) == 1
         assert results[0].chunk_type == "class"

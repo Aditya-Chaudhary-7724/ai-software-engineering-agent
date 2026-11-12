@@ -26,7 +26,8 @@ def test_index_repository_end_to_end(tmp_path, vector_store):
             ["def add(a, b):\n    return a + b"]
         )[0]
         hits = vector_store.similarity_search(
-            conn, query_embedding, top_k=1, repository_id=result.repository_id
+            conn, query_embedding, top_k=1, repository_id=result.repository_id,
+            embedding_model=DeterministicLocalEmbeddingProvider.model_id,
         )
         assert hits[0].symbol_name == "add"
     finally:

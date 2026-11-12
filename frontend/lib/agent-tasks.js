@@ -252,6 +252,7 @@ const ERRORS = {
   database_unavailable: 'The database was unavailable.',
   schema_not_initialized: 'The database schema is not initialized (run backend/scripts/apply_schema.py).',
   llm_quota_exceeded: 'The free AI quota ran out during this task, so it stopped. Nothing further was retried.',
+  reindex_required: 'This repository was indexed with a different embedding model than the server now uses. Re-index it to search it.',
   embedding_not_configured: 'The embedding model is not configured on the server.',
   llm_not_configured: 'The AI provider is not configured on the server.',
   internal_error: 'The task failed unexpectedly. Details are in the backend log.',

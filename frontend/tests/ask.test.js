@@ -54,19 +54,21 @@ describe('answer notices are derived from reported fields only', () => {
     expect(answerNotices(real)).toEqual([]);
   });
 
-  it('reports an unbuilt graph, a provider mismatch, and no context', () => {
+  it('reports an unbuilt graph and no context', () => {
     const titles = answerNotices(
       response({
         answer: { text: 'x', generator: 'anthropic', is_placeholder: false },
         retrieval: { embedding_provider: 'openai', semantic_embeddings: true, graph: 'used', graph_built: false },
-        warnings: ['embedding_provider_mismatch', 'no_relevant_context'],
+        warnings: ['no_relevant_context'],
       }),
     ).map((n) => n.title);
-    expect(titles).toEqual(['No graph for this repository', 'Embedding mismatch', 'No relevant code found']);
+    expect(titles).toEqual(['No graph for this repository', 'No relevant code found']);
   });
 
   it('error messages fall back safely', () => {
     expect(askErrorMessage('answer_generation_failed')).toMatch(/could not be generated/);
+    // An embedding-model mismatch is now refused (409), not answered with a warning.
+    expect(askErrorMessage('reindex_required')).toMatch(/Re-index it/);
     expect(askErrorMessage('<img src=x>')).toBe('The question could not be answered.');
   });
 });

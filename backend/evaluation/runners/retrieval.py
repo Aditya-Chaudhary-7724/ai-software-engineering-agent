@@ -91,7 +91,11 @@ def _evaluate_case(
     try:
         query_embedding = embedding_provider.embed([case.query])[0]
         vector_hits = vector_store.similarity_search(
-            conn, query_embedding, top_k=_TOP_K_FOR_MERGE, repository_id=repository_id
+            conn,
+            query_embedding,
+            top_k=_TOP_K_FOR_MERGE,
+            repository_id=repository_id,
+            embedding_model=embedding_provider.model_id,
         )
         keyword_hits = keyword_search(conn, case.query, top_k=_TOP_K_FOR_MERGE, repository_id=repository_id)
         rag_hybrid = merge_rag_hybrid(vector_hits, keyword_hits, top_k=_TOP_K_FOR_MERGE)

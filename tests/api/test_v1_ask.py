@@ -237,21 +237,26 @@ def test_real_llm_provider_is_labelled_as_not_placeholder(api_client, indexed_re
     assert body["answer"] == {"text": "add_numbers returns a + b.", "generator": "anthropic", "is_placeholder": False}
 
 
-def test_embedding_provider_mismatch_is_warned(api_client, indexed_repo):
-    repository_id, root = indexed_repo
-    conn = psycopg.connect(TEST_DATABASE_URL)
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO jobs (id, job_type, status, stage, target_path, repository_id, progress, finished_at) "
-            "VALUES (gen_random_uuid(), 'reindex', 'completed', 'done', %s, %s, '{\"embedding_provider\": \"openai\"}', now())",
-            (str(root), repository_id),
-        )
-    conn.commit()
-    conn.close()
+def test_an_embedding_model_mismatch_is_refused_not_answered(api_client, indexed_repo):
+    """Regression: this used to answer with a warning, ranking vectors from
+    another model as if they were comparable."""
+    repository_id, _ = indexed_repo
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute("UPDATE repositories SET embedding_model = 'openai' WHERE id = %s", (repository_id,))
+    before = _db_snapshot()
 
-    body = _ask(api_client, repository_id, {"question": "add_numbers"}).json()
+    response = _ask(api_client, repository_id, {"question": "add_numbers"})
 
-    assert "embedding_provider_mismatch" in body["warnings"]
+    assert (response.status_code, response.json()) == (409, {"error": "reindex_required"})
+    assert _db_snapshot() == before
+
+
+def test_a_repository_indexed_before_models_were_recorded_must_be_reindexed(api_client, indexed_repo):
+    repository_id, _ = indexed_repo
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute("UPDATE repositories SET embedding_model = NULL WHERE id = %s", (repository_id,))
+    response = _ask(api_client, repository_id, {"question": "add_numbers"})
+    assert (response.status_code, response.json()) == (409, {"error": "reindex_required"})
 
 
 def test_ask_requires_the_service_token(api_client, indexed_repo):

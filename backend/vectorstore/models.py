@@ -12,6 +12,11 @@ from typing import Optional
 
 EMBEDDING_DIMENSION = 1536
 
+# The ONLY vector columns that exist, by dimension (pgvector columns have a
+# fixed dimension). Column names are taken from this mapping, never from
+# input, and any other dimension is refused (EmbeddingDimensionError).
+EMBEDDING_COLUMNS = {1536: "embedding", 384: "embedding_384"}
+
 
 @dataclass(frozen=True)
 class CodeChunk:

@@ -229,3 +229,16 @@ def test_a_misconfigured_llm_fails_the_task_as_not_configured(indexed_repo, monk
     assert _run_once(store, executor)
 
     assert (store.get(task.id).status, store.get(task.id).error_code) == ("failed", "llm_not_configured")
+
+
+def test_a_repository_indexed_with_another_embedding_model_fails_as_reindex_required(indexed_repo):
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute("UPDATE repositories SET embedding_model = 'openai' WHERE id = %s", (indexed_repo["repository_id"],))
+    store, executor = make_executor()
+    task = _submit(store, indexed_repo)
+
+    assert _run_once(store, executor)
+
+    failed = store.get(task.id)
+    assert (failed.status, failed.error_code) == ("failed", "reindex_required")
+    assert (indexed_repo["root"] / "main.py").read_text() == ORIGINAL_CONTENT

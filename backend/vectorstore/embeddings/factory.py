@@ -24,7 +24,8 @@ def configured_embedding_provider() -> Tuple[EmbeddingProvider, str]:
     if name == "openai":
         from vectorstore.embeddings.openai_provider import OpenAIEmbeddingProvider
 
-        return OpenAIEmbeddingProvider(), "openai"
+        openai_provider = OpenAIEmbeddingProvider()
+        return openai_provider, openai_provider.model_id
     if name == "fastembed":
         from vectorstore.embeddings.fastembed_provider import FastEmbedEmbeddingProvider
 
@@ -39,5 +40,5 @@ def configured_embedding_provider() -> Tuple[EmbeddingProvider, str]:
             model_path=os.environ.get("EMBEDDING_MODEL_PATH", "").strip() or None,
             threads=int(threads) if threads else None,
         )
-        return provider, f"fastembed:{model.name}"
-    return DeterministicLocalEmbeddingProvider(), "deterministic_local"
+        return provider, provider.model_id
+    return DeterministicLocalEmbeddingProvider(), DeterministicLocalEmbeddingProvider.model_id

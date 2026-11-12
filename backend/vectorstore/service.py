@@ -12,7 +12,7 @@ from parsing.service import ParsingService
 from vectorstore.chunking import build_chunks
 from vectorstore.embeddings.base import EmbeddingProvider
 from vectorstore.migrations import apply_schema
-from vectorstore.store import VectorStore
+from vectorstore.store import VectorStore, embedding_column
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,9 @@ class IndexingService:
         parsing_result = ParsingService().parse_repository(repository_path, ingestion_result)
         chunks = build_chunks(repository_path, ingestion_result, parsing_result)
 
+        # Fail fast, before spending time embedding, if this provider's
+        # vectors have no column to go into.
+        embedding_column(self._embedding_provider.dimension)
         embeddings = self._embedding_provider.embed([c.content for c in chunks]) if chunks else []
 
         conn = self._vector_store.connect()
@@ -44,8 +47,14 @@ class IndexingService:
             # concurrent re-indexes of the same repository run one after the
             # other instead of both inserting a full copy.
             with conn.transaction():
+                # The model is recorded in the SAME transaction that replaces the
+                # chunks, so the recorded model always matches the stored vectors.
                 repository_id = self._vector_store.get_or_create_repository(
-                    conn, ingestion_result.repository.name, ingestion_result.repository.root_path, commit=False
+                    conn,
+                    ingestion_result.repository.name,
+                    ingestion_result.repository.root_path,
+                    embedding_model=self._embedding_provider.model_id,
+                    commit=False,
                 )
                 self._vector_store.delete_repository_chunks(conn, repository_id)
                 self._vector_store.insert_chunks(conn, repository_id, chunks, embeddings, commit=False)
