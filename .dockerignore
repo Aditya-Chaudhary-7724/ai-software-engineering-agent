@@ -20,7 +20,8 @@ venv/
 .pytest_cache/
 .mypy_cache/
 
-# Node (frontend/ is currently empty — see docs/deployment.md)
+# Node: frontend/ is the Next.js app. It is not part of this backend image
+# (no COPY references it) and has no container image of its own yet.
 node_modules/
 .next/
 

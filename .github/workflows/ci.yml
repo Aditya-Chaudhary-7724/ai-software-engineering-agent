@@ -1,31 +1,23 @@
-# Phase 15: CI verification — deliberately CI only, no CD/deploy job.
+# CI verification only — no deploy job (Phase 15; extended in F8).
 #
-# F8 additions: a `frontend` job (Vitest, production build, npm audit);
-# pinned test tools; a Python dependency audit of the SHIPPED backend image
-# against a reviewed accept-list (.github/pip-audit-accepted.txt), so any
-# new advisory fails the build; and separate application/test databases so
-# tests/conftest.py's guard (pytest refuses to run against DATABASE_URL)
-# holds in CI too.
+# Job `verify`: full backend test suite, security suite, mypy, diff
+# hygiene, an explicit schema-migration step on a fresh database, backend
+# and sandbox image builds, a non-root / no-secrets check of the backend
+# image, a Python dependency audit of the SHIPPED image's own `pip freeze`
+# against a reviewed accept-list (.github/pip-audit-accepted.txt, so any
+# new advisory fails the build), and check_production_config.py.
+# Job `frontend`: Vitest, production build, npm audit.
+# Separate application/test databases keep tests/conftest.py's guard
+# (pytest refuses to run against DATABASE_URL) meaningful in CI too.
 #
-# This workflow verifies the codebase (tests, types, security tests,
-# diff hygiene, Docker image builds). It does NOT deploy anything
-# anywhere: there is no actual deployment target, registry, or hosting
-# credential configured for this project (see docs/deployment.md), and
-# per this project's own instructions, deployment must never be
-# automated against infrastructure that hasn't actually been
-# provisioned. If a real deployment target is added later, that
-# belongs in a SEPARATE workflow (e.g. cd.yml), gated on this one
-# passing first, and using GitHub Actions' own encrypted secrets —
-# never a value committed to this repository.
+# Deployment, if any, belongs in a SEPARATE workflow gated on this one
+# passing, using GitHub Actions' encrypted secrets — never a value
+# committed to this repository, and never against infrastructure that
+# hasn't actually been provisioned.
 #
-# NOTE: this workflow has been reasoned through carefully to mirror
-# the exact local verification commands already proven to work in this
-# project's development environment (full test suite, mypy, security
-# tests, Docker builds — see this repository's own session history in
-# docs/deployment.md), but it has NOT been executed on GitHub Actions
-# itself as part of building it (that would require pushing, which is
-# out of scope for this phase). Treat it as a carefully-designed,
-# unexecuted pipeline until it has actually run once.
+# Run status: whether this workflow has actually passed on GitHub Actions
+# is recorded in docs/deployment.md section 11 (with dates), not in this
+# comment, which cannot track run history.
 
 name: CI
 
