@@ -28,6 +28,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import (
     check_environment,
+    demo_configuration_problems,
+    demo_mode_enabled,
+    demo_repository_ids,
     embedding_configuration_problems,
     embedding_provider_name,
     feature_flags,
@@ -70,14 +73,20 @@ def main() -> None:
     print(f"Embedding provider: {embedding_provider_name()}")
     for problem in embedding_problems:
         print(f"  PROBLEM: {problem}")
+    demo_problems = demo_configuration_problems()
+    demo_state = f"enabled, repositories {sorted(demo_repository_ids())}" if demo_mode_enabled() else "disabled"
+    print(f"Demo mode: {demo_state}")
+    for problem in demo_problems:
+        print(f"  PROBLEM: {problem}")
 
     missing = missing_required_settings()
     print()
     if missing:
         print(f"FAILED: {len(missing)} required setting(s) missing: {', '.join(missing)}")
         sys.exit(1)
-    if llm_problems or embedding_problems:
-        print(f"FAILED: {len(llm_problems) + len(embedding_problems)} provider configuration problem(s).")
+    if llm_problems or embedding_problems or demo_problems:
+        count = len(llm_problems) + len(embedding_problems) + len(demo_problems)
+        print(f"FAILED: {count} configuration problem(s).")
         sys.exit(1)
 
     print("OK: all required settings are configured.")

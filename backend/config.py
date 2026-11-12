@@ -53,6 +53,7 @@ OPTIONAL_SETTINGS: List[SettingSpec] = [
     SettingSpec("EMBEDDING_API_KEY", False, "OpenAI API key (Phase 3) — real semantic embeddings; DeterministicLocalEmbeddingProvider is used without it."),
     SettingSpec("GITHUB_TOKEN", False, "GitHub PAT (Phase 11) — required only for private repos, pushing, or opening PRs; public read-only access works without it."),
     SettingSpec("API_SERVICE_TOKEN", False, "Bearer token the frontend server uses to call /api/v1 (min 32 chars) — /api/v1 refuses all requests (503) without it; health endpoints are unaffected. Server-only; never exposed to a browser."),
+    SettingSpec("DEMO_API_SERVICE_TOKEN", False, "Second bearer token, for the public demo only (min 32 chars, must differ from API_SERVICE_TOKEN): read-only scope over DEMO_REPOSITORY_IDS, enforced by the backend. Server-only."),
     SettingSpec("WORKSPACE_ROOT", False, "Absolute path of a DEDICATED directory where GitHub repositories are cloned for ingestion (frontend phase F3) — ingestion over HTTP is disabled without it."),
     SettingSpec("LANGSMITH_API_KEY", False, "Optional LangSmith trace export (Phase 13) — local JSON tracing (JSONFileRecorder) works fully without it."),
 ]
@@ -205,6 +206,48 @@ def embedding_configuration_problems() -> List[str]:
         model_path = os.environ.get("EMBEDDING_MODEL_PATH", "").strip()
         if model_path and not os.path.isabs(model_path):
             problems.append("EMBEDDING_MODEL_PATH must be an absolute path")
+    return problems
+
+
+# --- Public demo -------------------------------------------------------------
+#
+# The demo is a second backend principal: requests bearing
+# DEMO_API_SERVICE_TOKEN get a deny-by-default, read-only scope
+# (api/demo_scope.py) restricted to DEMO_REPOSITORY_IDS. The operator token
+# (API_SERVICE_TOKEN) keeps full power. Demo mode is OFF unless the demo token
+# is set; an invalid demo token is never accepted (fail closed).
+DEMO_TOKEN_MIN_LENGTH = 32
+
+
+def demo_repository_ids() -> frozenset:
+    """Valid ids from DEMO_REPOSITORY_IDS (comma-separated); invalid entries
+    are reported by demo_configuration_problems and never allowed."""
+    ids = set()
+    for part in os.environ.get("DEMO_REPOSITORY_IDS", "").split(","):
+        part = part.strip()
+        if part.isdigit() and int(part) >= 1:
+            ids.add(int(part))
+    return frozenset(ids)
+
+
+def demo_mode_enabled() -> bool:
+    return bool(os.environ.get("DEMO_API_SERVICE_TOKEN"))
+
+
+def demo_configuration_problems() -> List[str]:
+    if not demo_mode_enabled():
+        return []
+    problems: List[str] = []
+    token = os.environ.get("DEMO_API_SERVICE_TOKEN", "")
+    if len(token) < DEMO_TOKEN_MIN_LENGTH:
+        problems.append(f"DEMO_API_SERVICE_TOKEN must be at least {DEMO_TOKEN_MIN_LENGTH} characters")
+    if token == os.environ.get("API_SERVICE_TOKEN", ""):
+        problems.append("DEMO_API_SERVICE_TOKEN must differ from API_SERVICE_TOKEN")
+    raw_ids = [p.strip() for p in os.environ.get("DEMO_REPOSITORY_IDS", "").split(",") if p.strip()]
+    if any(not (p.isdigit() and int(p) >= 1) for p in raw_ids):
+        problems.append("DEMO_REPOSITORY_IDS must be a comma-separated list of repository ids")
+    if not demo_repository_ids():
+        problems.append("demo mode is enabled but DEMO_REPOSITORY_IDS lists no repository")
     return problems
 
 

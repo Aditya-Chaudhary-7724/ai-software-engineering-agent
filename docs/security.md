@@ -238,6 +238,23 @@ Checkpoint data is persisted in PostgreSQL with a msgpack-only serializer: LangG
 - **Dependency audit:** see `docs/deployment.md` section 12. 20 Python advisories assessed and accepted with reasons (`.github/pip-audit-accepted.txt`); CI fails on any new one. These are **mitigated, not fixed**: the vulnerable versions still ship (4 mitigated, 1 partly mitigated, 15 not reachable). npm: 0.
 - **Not yet verified:** the CSP is verified at the HTTP level only (no real-browser console check yet); the local Neo4j container is exposed on the LAN and needs loopback binding before use on an untrusted network (`docs/deployment.md` sections 3, 6, 11, 23).
 
+## 13e. Public Demo Principal (2026-11-12)
+
+**Status: backend scope IMPLEMENTED AND TESTED; rate limits, budget, propose-only demo tasks and the frontend are not built yet.**
+
+The public demo is a **second backend principal**, not a frontend-only mode. The frontend server holds two secrets and chooses which one to send; the backend decides what each may do:
+
+| | `API_SERVICE_TOKEN` (operator) | `DEMO_API_SERVICE_TOKEN` (demo) |
+|---|---|---|
+| Routes | all `/api/v1` | only `api/demo_scope.py` `DEMO_ALLOWED_ROUTES`: capabilities, repository/file/graph reads, Ask |
+| Repositories | all | only `DEMO_REPOSITORY_IDS`; any other id answers `404 repository_not_found`, identical to a nonexistent one; the list is filtered |
+| Refused (`403 demo_forbidden`) | — | ingestion, re-index, agent tasks (until propose-only exists), approval decisions, the task list, traces, jobs |
+
+- **Role from the secret only.** `require_service_token` returns a `Principal` decided solely by which token matched (both compared in constant time, both always evaluated). No header or body field can select a role (tested with `X-Role`-style headers).
+- **Deny by default.** The guard runs at the `/api/v1` router, after authentication. `tests/api/test_demo_scope.py` enumerates the application's real routes: every route not deliberately allowlisted must answer `403 demo_forbidden`, and every allowlist entry must be a real route; the only non-GET entry is Ask.
+- **Fail closed.** A demo token shorter than 32 characters, or with no valid `DEMO_REPOSITORY_IDS`, is never accepted (401). `check_production_config.py` reports these and exits 1.
+- **Residual risk:** if the demo token is configured EQUAL to the operator token, it is the operator token and authenticates as the operator; the backend cannot distinguish identical secrets. The config check flags it (exit 1), and the frontend must refuse that configuration too.
+
 ## 14. Known Limitations
 
 - **Filename-based secret detection only** — a secret embedded in ordinary file content is not detected (section 4, 11).
