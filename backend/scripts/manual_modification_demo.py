@@ -21,7 +21,7 @@ Requires reachable PostgreSQL (with pgvector).
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/manual_modification_demo.py
+    .venv311/bin/python backend/scripts/manual_modification_demo.py
 """
 
 import getpass

@@ -17,9 +17,9 @@ explicitly requested.
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/run_evaluation.py
-    .venv/bin/python backend/scripts/run_evaluation.py --json /tmp/eval_report.json
-    .venv/bin/python backend/scripts/run_evaluation.py --llm-judge   # requires LLM_API_KEY
+    .venv311/bin/python backend/scripts/run_evaluation.py
+    .venv311/bin/python backend/scripts/run_evaluation.py --json /tmp/eval_report.json
+    .venv311/bin/python backend/scripts/run_evaluation.py --llm-judge   # requires LLM_API_KEY
 
 F7 options (all opt-in; see docs/evaluation.md):
 

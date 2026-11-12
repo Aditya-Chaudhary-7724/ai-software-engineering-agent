@@ -10,10 +10,10 @@ directory (default `.observability/traces/`, gitignored) — no external
 service involved.
 
 Usage:
-    .venv/bin/python backend/scripts/inspect_trace.py --list
-    .venv/bin/python backend/scripts/inspect_trace.py <trace_id>
-    .venv/bin/python backend/scripts/inspect_trace.py <trace_id> --json
-    .venv/bin/python backend/scripts/inspect_trace.py <trace_id> --trace-dir /custom/path
+    .venv311/bin/python backend/scripts/inspect_trace.py --list
+    .venv311/bin/python backend/scripts/inspect_trace.py <trace_id>
+    .venv311/bin/python backend/scripts/inspect_trace.py <trace_id> --json
+    .venv311/bin/python backend/scripts/inspect_trace.py <trace_id> --trace-dir /custom/path
 """
 
 import argparse

@@ -16,7 +16,7 @@ Requires a reachable PostgreSQL with pgvector installed.
 
 Run from the repository root:
 
-    .venv/bin/python backend/scripts/manual_rag_demo.py
+    .venv311/bin/python backend/scripts/manual_rag_demo.py
 """
 
 import getpass

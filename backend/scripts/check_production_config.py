@@ -18,7 +18,7 @@ optional capability being unavailable is an honest, expected state
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/check_production_config.py
+    .venv311/bin/python backend/scripts/check_production_config.py
 """
 
 import sys

@@ -16,7 +16,7 @@ default used throughout this project's tests.
 
 Run from the repository root:
 
-    .venv/bin/python backend/scripts/manual_vectorstore_demo.py
+    .venv311/bin/python backend/scripts/manual_vectorstore_demo.py
 """
 
 import getpass

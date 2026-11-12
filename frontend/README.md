@@ -104,8 +104,8 @@ npm run -s generate-secret       # put it in frontend/.env.local AND the backend
 # 5. Run the backend (repository root), then this app.
 #    (backend, from the repository root; WORKSPACE_ROOT must be absolute)
 #      export WORKSPACE_ROOT="$PWD/data/workspaces"
-#      .venv/bin/python backend/scripts/apply_schema.py
-#      cd backend && ../.venv/bin/uvicorn api.main:app --port 8000
+#      .venv311/bin/python backend/scripts/apply_schema.py
+#      cd backend && ../.venv311/bin/uvicorn api.main:app --port 8000
 npm run dev                      # http://127.0.0.1:3000
 ```
 

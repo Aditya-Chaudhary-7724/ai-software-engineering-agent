@@ -245,7 +245,7 @@ Tests: `tests/test_f8_database_guard.py`.
 
 **Real-GitHub tests (F8):** 5 tests clone or query `octocat/Hello-World` unauthenticated (60 requests/hour per IP; CI runners share IPs). They now **skip with the reason** when fewer than 15 requests remain, instead of failing with `403 rate limit exceeded` (`tests/github_integration/conftest.py`). Found in F8 when repeated local runs exhausted the quota. The ingestion job itself handled it correctly, ending with `github_rate_limited`. Treat a CI run where they skipped as not having exercised GitHub.
 
-**Python version:** CI and the image use Python 3.11; this project's local `.venv` is 3.9.6. Results are close but not identical (e.g. PyPI offers newer starlette/requests only for ≥ 3.10). Recommended: move the local venv to 3.11.
+**Python version:** CI and the image use Python 3.11. **Update (2026-11-12):** local development now uses `.venv311` (Homebrew Python 3.11.18), matching them; the old 3.9.6 `.venv` is no longer used (fastembed also needs ≥ 3.10). Transitive dependencies are still not locked, so local and image package versions can still differ.
 
 ## 12. Dependency / Image Security
 
@@ -267,7 +267,7 @@ None of the 20 is **fixed**: the vulnerable code still ships. 4 are **mitigated*
 **Trial (2026-11-08, throwaway container, nothing changed in the repo):** `fastapi==0.133.0` (the first release without Starlette's `<1.0` cap), `starlette==1.3.1` and `requests==2.33.0` on Python 3.11. `pip check` was clean; the full suite gave 1081 passed and 0 failed; OSV found no known vulnerabilities in those three. That upgrade would fix 8 of the 20.
 
 **Upgrade path (not done in F8, deliberately):**
-1. Move the local venv to Python 3.11. On 3.9, PyPI offers at most starlette 0.49.3 and requests 2.32.5, which cannot fix the reachable advisories.
+1. ~~Move the local venv to Python 3.11.~~ Done 2026-11-12 (`.venv311`). On 3.9, PyPI offered at most starlette 0.49.3 and requests 2.32.5, which could not fix the reachable advisories.
 2. Upgrade `fastapi` to a release allowing starlette ≥ 1.3.1, and `requests` ≥ 2.33.0. Re-run the full suite.
 3. Separately, upgrade langgraph to 1.x with langgraph-checkpoint ≥ 4.1.1 and langgraph-checkpoint-postgres ≥ 3.1.3. That is a major version that touches the F6 checkpoint serializer; re-run `tests/agent_tasks` and the F7 lifecycle evaluation.
 
@@ -285,7 +285,7 @@ Then delete the fixed entries from the accept-list.
 
 ```bash
 set -a; source .env; set +a
-.venv/bin/python backend/scripts/check_production_config.py
+.venv311/bin/python backend/scripts/check_production_config.py
 ```
 
 Exit code `0` if every REQUIRED setting (`DATABASE_URL`) is configured, `1` otherwise — safe to wire into a deploy pipeline's pre-flight check.
@@ -345,7 +345,7 @@ Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicat
 - **No PostgreSQL connection pooling** (connection per operation; adequate at single-operator scale).
 - **Neo4j is shared** by development, tests and evaluation, namespaced rather than isolated. It has no TLS locally, `restart=no`, and is **exposed on the LAN** (all interfaces); it needs the loopback binding before use on an untrusted network (section 6).
 - **No frontend container image and no Docker Compose file.** Two images and a Next.js process are wired by hand.
-- **Local Python 3.9 vs CI/image 3.11, and no transitive lock.** 26 of 63 shared packages differ, so local test runs do not test what ships. Run the suite in the image, or move to a 3.11 venv with a constraints file.
+- **No transitive lock.** Local development moved to Python 3.11 (`.venv311`, 2026-11-12), matching CI and the image, but transitive versions are still unpinned, so local runs may still differ from what ships. A constraints file would close this.
 
 ## 20. What Is Implemented and Tested
 

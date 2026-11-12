@@ -36,7 +36,7 @@ correctness.
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/manual_agent_demo.py
+    .venv311/bin/python backend/scripts/manual_agent_demo.py
 """
 
 import getpass
@@ -129,8 +129,8 @@ def main() -> None:
             # Phase 13: a real JSONFileRecorder-backed tracer, so every
             # question/approval/fix-loop below produces a real, locally
             # inspectable trace — run this script, then:
-            #   .venv/bin/python backend/scripts/inspect_trace.py --list
-            #   .venv/bin/python backend/scripts/inspect_trace.py <thread_id>
+            #   .venv311/bin/python backend/scripts/inspect_trace.py --list
+            #   .venv311/bin/python backend/scripts/inspect_trace.py <thread_id>
             tracer = Tracer(JSONFileRecorder())
             service = AgentService(vector_store, neo4j_client, embedding_provider, StubLLMProvider(), test_runner, tracer)
             root_path = str(root.resolve())
@@ -198,9 +198,9 @@ def main() -> None:
 
             print("--- Traces recorded (Phase 13) ---")
             print("  Every question above got its own trace, keyed by its thread_id. Inspect one with:")
-            print("    .venv/bin/python backend/scripts/inspect_trace.py <thread_id>")
+            print("    .venv311/bin/python backend/scripts/inspect_trace.py <thread_id>")
             print("  or list every trace this run produced:")
-            print("    .venv/bin/python backend/scripts/inspect_trace.py --list")
+            print("    .venv311/bin/python backend/scripts/inspect_trace.py --list")
             for label, tid in [("3. Modify", modify_thread), ("4. Modify + testing loop", loop_thread)]:
                 print(f"  [{label}] thread_id / trace_id = {tid}")
         finally:

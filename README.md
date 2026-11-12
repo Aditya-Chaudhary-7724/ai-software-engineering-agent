@@ -146,10 +146,12 @@ Not yet supported (explicitly out of scope for Phase 1):
 **Running it:**
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-.venv/bin/python -m pytest                              # run the test suite
-.venv/bin/python backend/scripts/manual_ingestion_demo.py  # manual demonstration
+# Python 3.11, matching the backend image and CI (e.g. `brew install python@3.11`).
+# fastembed (local embeddings) needs Python >= 3.10.
+python3.11 -m venv .venv311
+.venv311/bin/pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+.venv311/bin/python -m pytest                              # run the test suite
+.venv311/bin/python backend/scripts/manual_ingestion_demo.py  # manual demonstration
 ```
 
 ### Phase 2 — Code Parsing (implemented)
@@ -171,8 +173,8 @@ Known, documented limitations:
 **Running it:**
 
 ```bash
-.venv/bin/python -m pytest                                # includes Phase 2 tests
-.venv/bin/python backend/scripts/manual_parsing_demo.py    # manual demonstration
+.venv311/bin/python -m pytest                                # includes Phase 2 tests
+.venv311/bin/python backend/scripts/manual_parsing_demo.py    # manual demonstration
 ```
 
 See `docs/architecture.md` for the full design and its IMPLEMENTED/PLANNED breakdown for what remains.
@@ -202,8 +204,8 @@ psql -d ai_swe_agent -c "CREATE EXTENSION vector;"
 
 **Running it:**
 ```bash
-.venv/bin/python -m pytest tests/vectorstore                    # skips cleanly if Postgres isn't reachable
-.venv/bin/python backend/scripts/manual_vectorstore_demo.py      # manual demonstration (no API key needed)
+.venv311/bin/python -m pytest tests/vectorstore                    # skips cleanly if Postgres isn't reachable
+.venv311/bin/python backend/scripts/manual_vectorstore_demo.py      # manual demonstration (no API key needed)
 ```
 
 ### Phase 4 — Code RAG (implemented)
@@ -228,8 +230,8 @@ question -> query embedding -> vector retrieval (Phase 3)
 
 **Running it:**
 ```bash
-.venv/bin/python -m pytest tests/rag                     # skips cleanly if Postgres isn't reachable
-.venv/bin/python backend/scripts/manual_rag_demo.py       # manual demonstration (no API keys needed)
+.venv311/bin/python -m pytest tests/rag                     # skips cleanly if Postgres isn't reachable
+.venv311/bin/python backend/scripts/manual_rag_demo.py       # manual demonstration (no API keys needed)
 ```
 
 ### Phase 5 — Knowledge Graph (implemented)
@@ -255,8 +257,8 @@ The `backend/graph` package builds a **Neo4j** graph of a repository's structure
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/graph               # skips cleanly if Neo4j isn't reachable
-.venv/bin/python backend/scripts/manual_graph_demo.py  # manual demonstration, cleans up after itself
+.venv311/bin/python -m pytest tests/graph               # skips cleanly if Neo4j isn't reachable
+.venv311/bin/python backend/scripts/manual_graph_demo.py  # manual demonstration, cleans up after itself
 ```
 
 ### Phase 6 — Hybrid Retrieval (implemented)
@@ -283,8 +285,8 @@ This directly implements the phase's own worked example: for "Where is the login
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/hybrid                # skips cleanly if either service is unreachable
-.venv/bin/python backend/scripts/manual_hybrid_demo.py  # manual demonstration, cleans up after itself
+.venv311/bin/python -m pytest tests/hybrid                # skips cleanly if either service is unreachable
+.venv311/bin/python backend/scripts/manual_hybrid_demo.py  # manual demonstration, cleans up after itself
 ```
 
 ### Phase 7 — Stateful Agent (implemented)
@@ -313,8 +315,8 @@ START -> task_analyzer -> planner -> repository_search -> graph_search
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/agent               # skips cleanly if either service is unreachable
-.venv/bin/python backend/scripts/manual_agent_demo.py  # manual demonstration of all 3 branches, cleans up after itself
+.venv311/bin/python -m pytest tests/agent               # skips cleanly if either service is unreachable
+.venv311/bin/python backend/scripts/manual_agent_demo.py  # manual demonstration of all 3 branches, cleans up after itself
 ```
 
 ### Phase 8 — Repository Tools (implemented)
@@ -343,9 +345,9 @@ The `backend/tools` package formalizes the ad-hoc function calls Phase 7's agent
 
 **Running it:**
 ```bash
-.venv/bin/python -m pytest tests/tools                # unit tests always run; DB-backed ones skip cleanly if unreachable
+.venv311/bin/python -m pytest tests/tools                # unit tests always run; DB-backed ones skip cleanly if unreachable
 set -a; source .env; set +a
-.venv/bin/python backend/scripts/manual_tools_demo.py  # manual demonstration of every tool, cleans up after itself
+.venv311/bin/python backend/scripts/manual_tools_demo.py  # manual demonstration of every tool, cleans up after itself
 ```
 
 ### Phase 9 — Code Modification (implemented)
@@ -370,9 +372,9 @@ instruction -> find affected file (Phase 3+4 retrieval) -> generate proposed con
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/modification                    # skips cleanly if Postgres isn't reachable
-.venv/bin/python backend/scripts/manual_modification_demo.py      # standalone demonstration, including the stale-change refusal
-.venv/bin/python backend/scripts/manual_agent_demo.py             # see it wired into the full agent (updated for Phase 9)
+.venv311/bin/python -m pytest tests/modification                    # skips cleanly if Postgres isn't reachable
+.venv311/bin/python backend/scripts/manual_modification_demo.py      # standalone demonstration, including the stale-change refusal
+.venv311/bin/python backend/scripts/manual_agent_demo.py             # see it wired into the full agent (updated for Phase 9)
 ```
 
 ### Phase 10 — Sandbox & Testing Loop (implemented)
@@ -423,11 +425,11 @@ apply_change -[applied?]-> run_tests_after_apply -[passed]-> END
 docker build -t ai-swe-agent-sandbox-python:latest \
     -f backend/sandbox/docker/python-test.Dockerfile backend/sandbox/docker
 
-.venv/bin/python -m pytest tests/sandbox                      # unit tests always run; real-Docker ones skip cleanly if unreachable
+.venv311/bin/python -m pytest tests/sandbox                      # unit tests always run; real-Docker ones skip cleanly if unreachable
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/agent                        # includes the Phase 10 fix-loop tests
-.venv/bin/python backend/scripts/manual_sandbox_demo.py        # standalone: passing/failing/hanging tests, network + filesystem isolation
-.venv/bin/python backend/scripts/manual_agent_demo.py          # scenario 4: the full fix loop against a real container
+.venv311/bin/python -m pytest tests/agent                        # includes the Phase 10 fix-loop tests
+.venv311/bin/python backend/scripts/manual_sandbox_demo.py        # standalone: passing/failing/hanging tests, network + filesystem isolation
+.venv311/bin/python backend/scripts/manual_agent_demo.py          # scenario 4: the full fix loop against a real container
 ```
 
 ### Phase 11 — GitHub Integration (implemented)
@@ -460,9 +462,9 @@ URL -> parse_github_url (validate: https://github.com/<owner>/<repo> only)
 
 **Running it:**
 ```bash
-.venv/bin/python -m pytest tests/github_integration          # real-network/Postgres tests skip cleanly if unreachable
+.venv311/bin/python -m pytest tests/github_integration          # real-network/Postgres tests skip cleanly if unreachable
 set -a; source .env; set +a
-.venv/bin/python backend/scripts/manual_github_demo.py        # real clone + real pipeline + proof push/PR are refused
+.venv311/bin/python backend/scripts/manual_github_demo.py        # real clone + real pipeline + proof push/PR are refused
 ```
 
 ### Phase 12 — Evaluation (implemented)
@@ -499,12 +501,12 @@ The `backend/evaluation` package is a real, quantitative evaluation framework co
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/evaluation                        # 58 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
-.venv/bin/python backend/scripts/run_evaluation.py                  # prints the full report; exit code reflects pass/fail
-.venv/bin/python backend/scripts/run_evaluation.py --json out.json  # also export raw results as JSON
-.venv/bin/python backend/scripts/run_evaluation.py --llm-judge       # adds a real-LLM RAG metric (requires LLM_API_KEY)
+.venv311/bin/python -m pytest tests/evaluation                        # 58 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
+.venv311/bin/python backend/scripts/run_evaluation.py                  # prints the full report; exit code reflects pass/fail
+.venv311/bin/python backend/scripts/run_evaluation.py --json out.json  # also export raw results as JSON
+.venv311/bin/python backend/scripts/run_evaluation.py --llm-judge       # adds a real-LLM RAG metric (requires LLM_API_KEY)
 # F7: full deterministic run incl. agent lifecycle + regression counts — see docs/evaluation.md
-.venv/bin/python backend/scripts/run_evaluation.py --isolated-database-url "postgresql://$USER@localhost:5432/ai_swe_agent_test" --with-regression
+.venv311/bin/python backend/scripts/run_evaluation.py --isolated-database-url "postgresql://$USER@localhost:5432/ai_swe_agent_test" --with-regression
 ```
 
 ### Phase 13 — Observability & Tracing (implemented)
@@ -540,9 +542,9 @@ Trace (trace_id == thread_id — the same ID Phase 7 already required, not a sec
 
 **Inspecting a trace locally — no external service or credentials ever required:**
 ```bash
-.venv/bin/python backend/scripts/inspect_trace.py --list            # every trace_id recorded so far
-.venv/bin/python backend/scripts/inspect_trace.py <trace_id>         # rendered, indented span tree
-.venv/bin/python backend/scripts/inspect_trace.py <trace_id> --json  # the raw trace as JSON
+.venv311/bin/python backend/scripts/inspect_trace.py --list            # every trace_id recorded so far
+.venv311/bin/python backend/scripts/inspect_trace.py <trace_id>         # rendered, indented span tree
+.venv311/bin/python backend/scripts/inspect_trace.py <trace_id> --json  # the raw trace as JSON
 ```
 `manual_agent_demo.py` now records real traces via `Tracer(JSONFileRecorder())` and prints the `thread_id`/`trace_id` for each scenario — run it, then `inspect_trace.py` on the printed ID for a complete walkthrough.
 
@@ -555,10 +557,10 @@ Trace (trace_id == thread_id — the same ID Phase 7 already required, not a sec
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/observability                     # 75 tests; DB/Neo4j-backed ones skip cleanly if unreachable
-.venv/bin/python backend/scripts/manual_agent_demo.py               # records real traces, prints their IDs
-.venv/bin/python backend/scripts/inspect_trace.py --list
-.venv/bin/python backend/scripts/inspect_trace.py <trace_id>
+.venv311/bin/python -m pytest tests/observability                     # 75 tests; DB/Neo4j-backed ones skip cleanly if unreachable
+.venv311/bin/python backend/scripts/manual_agent_demo.py               # records real traces, prints their IDs
+.venv311/bin/python backend/scripts/inspect_trace.py --list
+.venv311/bin/python backend/scripts/inspect_trace.py <trace_id>
 ```
 
 ### Phase 14 — Security Audit & Hardening (implemented)
@@ -580,9 +582,9 @@ A comprehensive security audit and hardening pass across Phases 1-13, driven by 
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/security -q          # 88 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
-.venv/bin/python -m pytest -q                           # full suite, including tests/security
-.venv/bin/python -m mypy backend
+.venv311/bin/python -m pytest tests/security -q          # 88 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
+.venv311/bin/python -m pytest -q                           # full suite, including tests/security
+.venv311/bin/python -m mypy backend
 git diff --check
 ```
 
@@ -601,9 +603,9 @@ A minimal, real production deployment layer — not a full deployment, and not c
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python backend/scripts/check_production_config.py     # validates required env vars; never prints values
-.venv/bin/python backend/scripts/apply_schema.py                 # explicit, idempotent, non-destructive schema migration
-.venv/bin/uvicorn api.main:app --app-dir backend --reload         # local dev run of the API
+.venv311/bin/python backend/scripts/check_production_config.py     # validates required env vars; never prints values
+.venv311/bin/python backend/scripts/apply_schema.py                 # explicit, idempotent, non-destructive schema migration
+.venv311/bin/uvicorn api.main:app --app-dir backend --reload         # local dev run of the API
 docker build -t ai-swe-agent-backend -f backend/Dockerfile .
 docker run --rm -p 8000:8000 -e DATABASE_URL=... -e APP_ENV=production ai-swe-agent-backend
 curl localhost:8000/health/live

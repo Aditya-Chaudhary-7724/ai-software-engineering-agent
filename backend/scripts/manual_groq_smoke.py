@@ -12,7 +12,7 @@ never printed; error text is redacted before printing.
 Run from the repository root, with GROQ_API_KEY and LLM_MODEL in .env:
 
     set -a; source .env; set +a
-    LLM_PROVIDER=groq .venv/bin/python backend/scripts/manual_groq_smoke.py --confirm-real-call
+    LLM_PROVIDER=groq .venv311/bin/python backend/scripts/manual_groq_smoke.py --confirm-real-call
 
 Exit codes: 0 success, 2 refused before calling (flag missing, not Groq,
 invalid configuration), 3 quota/rate limit, 4 any other call failure.

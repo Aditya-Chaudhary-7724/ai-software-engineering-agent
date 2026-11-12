@@ -21,7 +21,7 @@ image built:
 
 Run from the repository root:
 
-    .venv/bin/python backend/scripts/manual_sandbox_demo.py
+    .venv311/bin/python backend/scripts/manual_sandbox_demo.py
 """
 
 import sys

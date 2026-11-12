@@ -332,17 +332,17 @@ Located at `backend/evaluation/`. A real, quantitative evaluation framework cove
 
 **Modification and testing-loop evaluation reuse Phase 9/10's own real mechanisms** — `ModificationService`, `AgentService`, the real `apply_change`/`run_tests_after_apply` graph nodes — rather than simulating them: approval-required, stale-change-refused, single-file-scope, and "a failing change is reported as a failure, never silently accepted" are all checked against real writes to real temporary files, with one case running a real Docker container (skipped honestly if Docker isn't reachable). The testing-loop cases use `ScriptedTestRunner` (see above) to isolate the bounded-iteration/wall-clock/approval-per-retry guarantees from sandbox/LLM variability — real end-to-end Docker execution of that same loop is demonstrated separately in `backend/scripts/manual_agent_demo.py`'s scenario 4.
 
-**What's genuinely tested locally vs. what requires a real LLM:** all 17 evaluation cases pass against real PostgreSQL, real Neo4j, and real Docker in this environment (`.venv/bin/python backend/scripts/run_evaluation.py`), and the evaluation CODE ITSELF (metric math, dataset structure, report rendering, and — importantly — each runner's ability to correctly detect a deliberately-wrong expectation as a failure, not only ever report success) is covered by 58 tests in `tests/evaluation/`. The one metric that requires a real `LLM_API_KEY` (`llm_judge_score`) is opt-in via `--llm-judge` and was not exercised live in this environment (no key present) — its response-parsing logic is unit-tested with a fake provider instead.
+**What's genuinely tested locally vs. what requires a real LLM:** all 17 evaluation cases pass against real PostgreSQL, real Neo4j, and real Docker in this environment (`.venv311/bin/python backend/scripts/run_evaluation.py`), and the evaluation CODE ITSELF (metric math, dataset structure, report rendering, and — importantly — each runner's ability to correctly detect a deliberately-wrong expectation as a failure, not only ever report success) is covered by 58 tests in `tests/evaluation/`. The one metric that requires a real `LLM_API_KEY` (`llm_judge_score`) is opt-in via `--llm-judge` and was not exercised live in this environment (no key present) — its response-parsing logic is unit-tested with a fake provider instead.
 
 Explicitly out of scope for Phase 12: any invented or hard-coded performance number (every figure in this section and in a report's output comes from an actual run, never typed in); code-generation *correctness* evaluation beyond "did the modification/testing-loop mechanism behave safely" (real code quality still requires `LLM_API_KEY`, the same caveat as every LLM-dependent phase); and a large benchmark corpus (the dataset is deliberately small enough to read in full — see `dataset.py` — per this phase's own instruction that it be "transparent enough that an interviewer can inspect it").
 
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/evaluation                       # 58 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
-.venv/bin/python backend/scripts/run_evaluation.py                 # prints the full report; exit code reflects pass/fail
-.venv/bin/python backend/scripts/run_evaluation.py --json out.json # also export the raw results as JSON
-.venv/bin/python backend/scripts/run_evaluation.py --llm-judge      # additionally scores RAG answers with a real LLM (requires LLM_API_KEY)
+.venv311/bin/python -m pytest tests/evaluation                       # 58 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
+.venv311/bin/python backend/scripts/run_evaluation.py                 # prints the full report; exit code reflects pass/fail
+.venv311/bin/python backend/scripts/run_evaluation.py --json out.json # also export the raw results as JSON
+.venv311/bin/python backend/scripts/run_evaluation.py --llm-judge      # additionally scores RAG answers with a real LLM (requires LLM_API_KEY)
 ```
 
 ### Observability
@@ -409,9 +409,9 @@ Trace (trace_id == thread_id — see below)
 
 **How to inspect a trace locally** — no external service, no credentials, ever required for this path:
 ```bash
-.venv/bin/python backend/scripts/inspect_trace.py --list                 # every trace_id recorded so far
-.venv/bin/python backend/scripts/inspect_trace.py <trace_id>              # rendered, indented span tree
-.venv/bin/python backend/scripts/inspect_trace.py <trace_id> --json       # the raw trace as JSON
+.venv311/bin/python backend/scripts/inspect_trace.py --list                 # every trace_id recorded so far
+.venv311/bin/python backend/scripts/inspect_trace.py <trace_id>              # rendered, indented span tree
+.venv311/bin/python backend/scripts/inspect_trace.py <trace_id> --json       # the raw trace as JSON
 ```
 `backend/scripts/manual_agent_demo.py` now constructs a real `Tracer(JSONFileRecorder())` and prints the `thread_id`/`trace_id` for each scenario it runs, so running that script and then `inspect_trace.py` on the ID it prints is a complete, self-contained walkthrough.
 

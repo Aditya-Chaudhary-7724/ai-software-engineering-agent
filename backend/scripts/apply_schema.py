@@ -22,7 +22,7 @@ and refuses an out-of-date database. Run it before starting a new image.
 Run from the repository root, against a real `DATABASE_URL`:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/apply_schema.py
+    .venv311/bin/python backend/scripts/apply_schema.py
 """
 
 import sys
