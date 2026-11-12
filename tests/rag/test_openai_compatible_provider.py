@@ -126,3 +126,42 @@ def test_other_provider_errors_are_not_disguised_as_quota_errors(monkeypatch):
     provider = _provider(monkeypatch, error)
     with pytest.raises(openai.InternalServerError):
         provider.generate("q")
+
+
+def _with_usage(completion, prompt_tokens, completion_tokens, reasoning_tokens=None):
+    details = None if reasoning_tokens is None else SimpleNamespace(reasoning_tokens=reasoning_tokens)
+    completion.usage = SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        completion_tokens_details=details,
+    )
+    return completion
+
+
+def test_reported_token_usage_is_recorded(monkeypatch):
+    provider = _provider(monkeypatch, _with_usage(_completion("ok"), 120, 30, reasoning_tokens=12))
+    assert provider.last_usage is None
+    provider.generate("q")
+    assert provider.last_usage == module.LLMUsage(prompt_tokens=120, completion_tokens=30, total_tokens=150, reasoning_tokens=12)
+
+
+def test_usage_without_a_reasoning_breakdown(monkeypatch):
+    provider = _provider(monkeypatch, _with_usage(_completion("ok"), 10, 5))
+    provider.generate("q")
+    assert provider.last_usage.total_tokens == 15 and provider.last_usage.reasoning_tokens is None
+
+
+def test_no_usage_reported_is_none_not_zero(monkeypatch):
+    provider = _provider(monkeypatch, _completion("ok"))  # no usage attribute
+    provider.generate("q")
+    assert provider.last_usage is None
+
+
+def test_usage_is_cleared_when_a_call_fails(monkeypatch):
+    provider = _provider(monkeypatch, _with_usage(_completion("ok"), 10, 5))
+    provider.generate("q")
+    provider._client.chat.completions.result = _rate_limit_error({})
+    with pytest.raises(LLMQuotaExceededError):
+        provider.generate("q")
+    assert provider.last_usage is None
