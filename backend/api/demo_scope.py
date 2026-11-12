@@ -43,6 +43,8 @@ DEMO_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset(
         ("POST", f"{_V1}/agent-tasks/route-preview"),
         ("POST", f"{_V1}/repositories/{{repository_id}}/agent-tasks"),
         ("GET", f"{_V1}/agent-tasks/{{task_id}}"),
+        # Pre-generated examples: a database read, no LLM call, no quota.
+        ("GET", f"{_V1}/repositories/{{repository_id}}/demo-examples"),
     }
 )
 

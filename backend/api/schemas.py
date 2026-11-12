@@ -330,3 +330,30 @@ class AgentTask(BaseModel):
 
 class AgentTaskList(BaseModel):
     tasks: List[AgentTask]
+
+
+class DemoExampleSource(BaseModel):
+    relative_path: str
+    start_line: Optional[int]
+    end_line: Optional[int]
+    symbol_name: Optional[str]
+
+
+class DemoExample(BaseModel):
+    """A pre-generated public-demo example (never generated on request)."""
+
+    kind: str  # "ask" | "task"
+    pre_generated: bool  # always True: the UI labels it "pre-generated example"
+    prompt: str
+    answer: Optional[str]
+    sources: List[DemoExampleSource]
+    # kind "task": the proposed diff, which was NEVER applied.
+    diff: Optional[str]
+    diff_relative_path: Optional[str]
+    generator: str
+    generated_at: Optional[datetime]
+
+
+class DemoExampleList(BaseModel):
+    repository_id: int
+    examples: List[DemoExample]

@@ -23,7 +23,8 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 #   2 (2026-11-12): demo_rate_events, demo_token_usage (public-demo limits).
 #   3 (2026-11-12): propose-only demo agent tasks (agent_tasks.proposal_only,
 #     demo_* budget columns, terminal status 'proposed').
-SCHEMA_VERSION = 3
+#   4 (2026-11-12): demo_examples (pre-generated public-demo examples).
+SCHEMA_VERSION = 4
 
 
 def apply_schema(conn: psycopg.Connection) -> None:

@@ -265,3 +265,27 @@ BEGIN
     END IF;
 END
 $$;
+
+-- 2026-11-12 (schema version 4): pre-generated public-demo examples.
+-- Written ONLY by the operator-run backend/scripts/generate_demo_examples.py
+-- (all of a repository's examples replaced in one transaction), served
+-- read-only to the demo, never counted against demo limits. kind 'ask':
+-- question + answer + sources (citations); kind 'task': instruction + the
+-- proposed diff (never applied). `generator` names the model that produced
+-- the text, shown next to the "pre-generated example" label.
+CREATE TABLE IF NOT EXISTS demo_examples (
+    id BIGSERIAL PRIMARY KEY,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('ask', 'task')),
+    position INTEGER NOT NULL CHECK (position >= 0),
+    prompt TEXT NOT NULL,
+    answer TEXT,
+    sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+    diff TEXT,
+    diff_relative_path TEXT,
+    generator TEXT NOT NULL,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (repository_id, kind, position),
+    CHECK ((kind = 'ask' AND answer IS NOT NULL AND diff IS NULL)
+        OR (kind = 'task' AND diff IS NOT NULL AND answer IS NULL))
+);
