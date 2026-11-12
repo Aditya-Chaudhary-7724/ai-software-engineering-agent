@@ -171,3 +171,25 @@ def test_redaction_stays_fast_on_long_hyphenated_input():
     start = time.monotonic()
     redact_secrets(adversarial)
     assert time.monotonic() - start < 1.0
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",  # plain alphanumeric
+        "gsk_fake_smoke_key_must_never_be_printed_42",  # underscores (leaked before)
+        "gsk_AbCd-EfGh-IjKl-MnOp-QrSt-UvWx-Yz01",  # hyphens
+    ],
+)
+def test_groq_key_shapes_with_underscores_or_hyphens_are_fully_redacted(secret):
+    redacted = redact_text(f"groq said: bad key {secret} (401)")
+    assert secret not in redacted and secret[-10:] not in redacted
+    assert redacted == f"groq said: bad key {REDACTED_MARKER} (401)"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["set my_gsk_configuration_value_for_tests to 1", "the gsk_ prefix and gsk_short are documented", "msgsk_thing_with_a_long_enough_name"],
+)
+def test_text_merely_containing_gsk_is_not_over_redacted(text):
+    assert redact_text(text) == text

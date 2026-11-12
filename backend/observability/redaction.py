@@ -64,7 +64,11 @@ _SECRET_VALUE_PATTERNS = (
     # the rest of the key including base64url `-`/`_`. The lookbehind keeps
     # words like "disk-..." out. Linear-time: `[...]+-` cannot contain "-".
     re.compile(r"(?<![A-Za-z0-9_-])sk-(?:[A-Za-z0-9_]+-)*[A-Za-z0-9_]{20,}[A-Za-z0-9_-]*"),
-    re.compile(r"gsk_[A-Za-z0-9]{20,}"),  # Groq API keys
+    # Groq API keys. Underscores and hyphens are allowed in the body (the
+    # earlier [A-Za-z0-9] stopped at the first "_" and left the rest of
+    # such a key visible); the lookbehind keeps identifiers that merely
+    # contain "gsk_" (e.g. "my_gsk_setting") out.
+    re.compile(r"(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9_-]{20,}"),
     re.compile(r"[Bb]earer\s+[A-Za-z0-9._-]{10,}"),  # "Bearer <token>" header values
     re.compile(r"postgresql(\+\w+)?://[^/\s:]*:[^/\s@]+@"),  # a DB URL with an embedded password
 )
