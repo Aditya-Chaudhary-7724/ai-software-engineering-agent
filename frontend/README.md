@@ -109,6 +109,12 @@ npm run -s generate-secret       # put it in frontend/.env.local AND the backend
 npm run dev                      # http://127.0.0.1:3000
 ```
 
+`npm start` (after `npm run build`) runs with `NODE_ENV=production`, so sign-in
+stays disabled (`auth_not_configured`, logged as
+`app_origin_required_in_production`) until `APP_ORIGIN` is set, e.g.
+`APP_ORIGIN=http://127.0.0.1:3000` for a local production run. `npm run dev`
+does not need it.
+
 Never commit `.env.local`; it is covered by the repository's `.gitignore`
 (`.env.*`). There is no default password or secret anywhere — until
 `OPERATOR_PASSWORD_HASH` and `SESSION_SECRET` are valid, sign-in is disabled.

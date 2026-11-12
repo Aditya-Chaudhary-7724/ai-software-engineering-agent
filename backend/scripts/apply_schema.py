@@ -28,8 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from agent.checkpointing import setup_postgres_checkpointer
-from vectorstore.migrations import apply_schema
-from vectorstore.store import VectorStore
+from vectorstore.migrations import apply_schema_to_database
 
 
 def main() -> None:
@@ -42,13 +41,10 @@ def main() -> None:
     import os
 
     database_url = os.environ["DATABASE_URL"]
-    vector_store = VectorStore(database_url)
-    conn = vector_store.connect()
-    try:
-        apply_schema(conn)
-        print("Schema applied (idempotent — CREATE ... IF NOT EXISTS only, nothing destructive).")
-    finally:
-        conn.close()
+    # Plain connection, NOT VectorStore.connect(): on a fresh database the
+    # `vector` type pgvector registers does not exist until this creates it.
+    apply_schema_to_database(database_url)
+    print("Schema applied (idempotent — CREATE ... IF NOT EXISTS only, nothing destructive).")
     # F6: LangGraph's own checkpoint tables (durable human-approval state).
     setup_postgres_checkpointer(database_url)
     print("LangGraph checkpoint tables applied (idempotent, library-managed migrations).")

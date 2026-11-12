@@ -47,7 +47,10 @@ jobs:
 
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        # PostgreSQL 18 + pgvector 0.8.6: the project's documented major
+        # version (README, docs/architecture.md) and the exact extension
+        # version used locally. Pinned so CI doesn't drift silently.
+        image: pgvector/pgvector:0.8.6-pg18
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -106,9 +109,45 @@ jobs:
           # F8: pinned to the versions verified locally (reproducible CI).
           pip install pytest==8.4.2 mypy==1.19.1 types-requests==2.32.4.20260107 httpx==0.28.1 pip-audit==2.9.0
 
-      - name: Create the separate application database
+      - name: Initialise the CI databases (separate app database, pgvector enabled)
+        # The service container creates only ai_swe_agent_test, and a fresh
+        # database has no `vector` type. VectorStore.connect() calls
+        # pgvector's register_vector() BEFORE schema.sql's own
+        # `CREATE EXTENSION IF NOT EXISTS vector` can run, so on a fresh
+        # database every vector-store test failed at setup with "vector type
+        # not found in the database". Enabling the extension first is the
+        # provisioning step a real database gets too. Idempotent. vector is
+        # the only extension the schema needs (no PostGIS).
+        # Both URLs come from the job env above; they name DIFFERENT
+        # databases, so tests/conftest.py's guard stays meaningful.
         run: |
-          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/ai_swe_agent_test', autocommit=True); c.execute('CREATE DATABASE ai_swe_agent_app')"
+          python - <<'EOF'
+          import os
+          import psycopg
+          from psycopg import sql
+
+          test_url, app_url = os.environ["TEST_DATABASE_URL"], os.environ["DATABASE_URL"]
+          app_db = psycopg.conninfo.conninfo_to_dict(app_url)["dbname"]
+          assert test_url != app_url, "CI test and application databases must differ"
+          with psycopg.connect(test_url, autocommit=True) as admin:
+              if not admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", (app_db,)).fetchone():
+                  admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(app_db)))
+          for url in (test_url, app_url):
+              with psycopg.connect(url, autocommit=True) as conn:
+                  conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                  db, server, vector = conn.execute(
+                      "SELECT current_database(), current_setting('server_version'),"
+                      " (SELECT extversion FROM pg_extension WHERE extname = 'vector')"
+                  ).fetchone()
+                  print(f"{db}: PostgreSQL {server}, vector {vector}")
+          EOF
+
+      - name: Apply the schema to the application database (explicit migration step)
+        # The same deliberate migration step a deploy runs
+        # (backend/scripts/apply_schema.py: schema.sql + LangGraph checkpoint
+        # tables), proven on a fresh database after the extension exists.
+        # Tests apply the schema to TEST_DATABASE_URL themselves via fixtures.
+        run: python backend/scripts/apply_schema.py
 
       - name: Build the Phase 10 sandbox image
         # Required by tests/sandbox and tests/security's real-Docker
