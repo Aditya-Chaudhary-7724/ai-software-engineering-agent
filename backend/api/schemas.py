@@ -25,7 +25,12 @@ class Capabilities(BaseModel):
     # Whether a real provider credential is configured — booleans only,
     # never a value. Without them the backend uses StubLLMProvider /
     # DeterministicLocalEmbeddingProvider (see backend/config.py).
+    # "anthropic" | "groq" | "stub" | "misconfigured" — a name, never a key.
+    llm_provider: str
     llm_provider_configured: bool
+    # "openai" | "fastembed" | "deterministic_local" | "misconfigured".
+    embedding_provider: str
+    # True only for a SEMANTIC provider (not the hash stand-in).
     embedding_provider_configured: bool
     github_token_configured: bool
     # SANDBOX_ENABLED (backend/config.py). When false, Docker is not even
@@ -205,7 +210,8 @@ class AskResponse(BaseModel):
     retrieval: AskRetrieval
     sources: List[AskSource]
     context_chunk_count: int
-    # "no_relevant_context" | "embedding_provider_mismatch"
+    # "no_relevant_context". (An embedding-model mismatch is no longer a
+    # warning: the request is refused with 409 reindex_required.)
     warnings: List[str]
 
 

@@ -6,7 +6,7 @@ and prints a summary of what was discovered, ignored, and detected.
 
 Run from the repository root:
 
-    backend/.venv/bin/python backend/scripts/manual_ingestion_demo.py
+    .venv311/bin/python backend/scripts/manual_ingestion_demo.py
 """
 
 import sys

@@ -18,7 +18,7 @@ optional capability being unavailable is an honest, expected state
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/check_production_config.py
+    .venv311/bin/python backend/scripts/check_production_config.py
 """
 
 import sys
@@ -26,7 +26,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import check_environment, feature_flags, missing_required_settings
+from config import (
+    check_environment,
+    demo_configuration_problems,
+    demo_mode_enabled,
+    demo_repository_ids,
+    embedding_configuration_problems,
+    embedding_provider_name,
+    feature_flags,
+    llm_configuration_problems,
+    llm_provider_name,
+    missing_required_settings,
+)
 
 
 def main() -> None:
@@ -52,10 +63,30 @@ def main() -> None:
     for flag in flags:
         print(f"  {flag.name:<{name_width}}  {'enabled' if flag.enabled else 'disabled'}")
 
+    # The provider NAME is not a secret; key values are never printed.
+    llm_problems = llm_configuration_problems()
+    print()
+    print(f"LLM provider: {llm_provider_name()}")
+    for problem in llm_problems:
+        print(f"  PROBLEM: {problem}")
+    embedding_problems = embedding_configuration_problems()
+    print(f"Embedding provider: {embedding_provider_name()}")
+    for problem in embedding_problems:
+        print(f"  PROBLEM: {problem}")
+    demo_problems = demo_configuration_problems()
+    demo_state = f"enabled, repositories {sorted(demo_repository_ids())}" if demo_mode_enabled() else "disabled"
+    print(f"Demo mode: {demo_state}")
+    for problem in demo_problems:
+        print(f"  PROBLEM: {problem}")
+
     missing = missing_required_settings()
     print()
     if missing:
         print(f"FAILED: {len(missing)} required setting(s) missing: {', '.join(missing)}")
+        sys.exit(1)
+    if llm_problems or embedding_problems or demo_problems:
+        count = len(llm_problems) + len(embedding_problems) + len(demo_problems)
+        print(f"FAILED: {count} configuration problem(s).")
         sys.exit(1)
 
     print("OK: all required settings are configured.")

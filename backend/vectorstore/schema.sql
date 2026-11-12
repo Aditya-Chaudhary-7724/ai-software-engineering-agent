@@ -47,6 +47,62 @@ CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding_hnsw
 CREATE INDEX IF NOT EXISTS idx_code_chunks_content_fts
     ON code_chunks USING gin (to_tsvector('english', content));
 
+-- 2026-11-12: vectors from more than one embedding model.
+--
+-- A pgvector column has ONE fixed dimension, so each supported dimension
+-- gets its own column (backend/vectorstore/models.py EMBEDDING_COLUMNS):
+-- `embedding` (1536: OpenAI text-embedding-3-small, the hash stand-in) and
+-- `embedding_384` (local bge-small via fastembed), each with its own HNSW
+-- index. Every chunk has exactly one of them (CHECK below).
+--
+-- `repositories.embedding_model` records WHICH model produced a
+-- repository's vectors (EmbeddingProvider.model_id). Searches refuse to
+-- compare a query from one model with vectors from another, even of the
+-- same dimension (ReindexRequiredError). NULL = indexed before this column
+-- existed: unknown, so it must be re-indexed before vector search.
+--
+-- Additive and non-destructive: new nullable columns, a relaxed NOT NULL
+-- and a CHECK every existing row already satisfies; no data is changed or
+-- removed. Each ALTER runs only if the catalog says it is still needed, so
+-- re-applying this file (which IndexingService does on every index) takes
+-- no ALTER TABLE lock once the database is up to date.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'repositories' AND column_name = 'embedding_model'
+    ) THEN
+        ALTER TABLE repositories ADD COLUMN embedding_model TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'code_chunks' AND column_name = 'embedding_384'
+    ) THEN
+        ALTER TABLE code_chunks ADD COLUMN embedding_384 VECTOR(384);
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'code_chunks'
+          AND column_name = 'embedding' AND is_nullable = 'NO'
+    ) THEN
+        ALTER TABLE code_chunks ALTER COLUMN embedding DROP NOT NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'code_chunks_exactly_one_embedding' AND conrelid = 'code_chunks'::regclass
+    ) THEN
+        ALTER TABLE code_chunks ADD CONSTRAINT code_chunks_exactly_one_embedding
+            CHECK (num_nonnulls(embedding, embedding_384) = 1);
+    END IF;
+END
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding_384_hnsw
+    ON code_chunks USING hnsw (embedding_384 vector_cosine_ops);
+
 -- Frontend phase F3: background jobs (GitHub ingestion / re-index), run by
 -- the API process's in-process worker (backend/jobs/). Postgres is the
 -- queue — no Redis/Celery: claiming uses FOR UPDATE SKIP LOCKED, so several
@@ -136,3 +192,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_agent_tasks_one_active_per_repository
     ON agent_tasks (repository_id) WHERE status IN ('queued', 'running', 'awaiting_approval');
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_created_at ON agent_tasks (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_repository_id ON agent_tasks (repository_id);
+
+-- 2026-11-12: schema version. One row; written by
+-- vectorstore.migrations.apply_schema (the version number lives in Python,
+-- SCHEMA_VERSION, so it has one source). Indexing CHECKS it instead of
+-- applying the schema itself, so a schema change only reaches a database
+-- through the explicit `backend/scripts/apply_schema.py` step.
+CREATE TABLE IF NOT EXISTS schema_version (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    version INTEGER NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

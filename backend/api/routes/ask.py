@@ -21,8 +21,7 @@ It is a POST only so the question travels in the body, not in URLs/logs.
 """
 
 import logging
-import os
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 import psycopg
 from fastapi import APIRouter, Depends
@@ -33,8 +32,9 @@ from graph.exceptions import MissingCredentialsError as Neo4jMissingCredentialsE
 from graph.queries import repository_exists
 from hybrid.service import HybridRAGService
 from jobs.ingestion import default_embedding_provider
-from rag.llm.base import LLMProvider
-from rag.llm.stub_provider import StubLLMProvider
+from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
+from vectorstore.exceptions import EmbeddingConfigurationError, ReindexRequiredError
+from rag.llm.factory import configured_llm_provider
 from vectorstore.store import VectorStore
 
 from api.dependencies import get_database_url, get_neo4j_client_factory, get_repository_record
@@ -66,14 +66,6 @@ class _NoGraphClient:
         pass
 
 
-def default_llm_provider() -> Tuple[LLMProvider, str]:
-    if os.environ.get("LLM_API_KEY"):
-        from rag.llm.anthropic_provider import AnthropicLLMProvider
-
-        return AnthropicLLMProvider(), "anthropic"
-    return StubLLMProvider(), "stub"
-
-
 def _open_graph(client_factory, root_path: str):
     """Returns (client, graph_status, graph_built)."""
     try:
@@ -88,28 +80,6 @@ def _open_graph(client_factory, root_path: str):
         return _NoGraphClient(), "unavailable", None
 
 
-def _indexed_with_provider(database_url: str, repository_id: int) -> Optional[str]:
-    """Embedding provider recorded by the repository's latest completed
-    ingestion job (F3), if any — used only to warn about a mismatch."""
-    try:
-        conn = psycopg.connect(database_url, connect_timeout=5)
-    except psycopg.OperationalError:
-        return None
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT progress->>'embedding_provider' FROM jobs WHERE repository_id = %s AND status = 'completed' "
-                "ORDER BY finished_at DESC LIMIT 1",
-                (repository_id,),
-            )
-            row = cur.fetchone()
-        return row[0] if row else None
-    except psycopg.Error:
-        return None
-    finally:
-        conn.close()
-
-
 @router.post("/repositories/{repository_id}/ask", response_model=AskResponse)
 def ask(
     request: AskRequest,
@@ -121,8 +91,16 @@ def ask(
     if not question:
         raise APIError(422, "invalid_question")
 
-    embedding_provider, embedding_name = default_embedding_provider()
-    llm_provider, llm_name = default_llm_provider()
+    try:
+        embedding_provider, embedding_name = default_embedding_provider()
+    except EmbeddingConfigurationError:
+        logger.warning("ask refused: the embedding provider is misconfigured (see check_production_config.py)")
+        raise APIError(503, "embedding_not_configured")
+    try:
+        llm_provider, llm_name = configured_llm_provider()
+    except LLMConfigurationError:
+        logger.warning("ask refused: the LLM provider is misconfigured (see check_production_config.py)")
+        raise APIError(503, "llm_not_configured")
     graph_client, graph_status, graph_built = _open_graph(neo4j_client_factory, record.root_path)
 
     def run(client) -> Any:
@@ -141,6 +119,17 @@ def ask(
             # (the LLM is only called after retrieval, so it is not paid twice).
             graph_status, graph_built = "unavailable", None
             result = run(_NoGraphClient())
+    except ReindexRequiredError as exc:
+        # Indexed with a different (or unrecorded) embedding model: comparing
+        # vectors across models gives meaningless matches, so refuse. This
+        # replaces the old warning-only check, which still answered.
+        logger.warning("ask refused: repository needs re-indexing", extra={"repository_id": exc.repository_id})
+        raise APIError(409, "reindex_required")
+    except LLMQuotaExceededError as exc:
+        # Free-tier rate limit / quota: an expected state, not a crash.
+        logger.warning("ask refused: LLM provider quota reached", extra={"retry_after_seconds": exc.retry_after_seconds})
+        headers = {"Retry-After": str(exc.retry_after_seconds)} if exc.retry_after_seconds else None
+        raise APIError(429, "llm_quota_exceeded", headers=headers)
     except psycopg.OperationalError:
         raise APIError(503, "database_unavailable")
     except psycopg.Error:
@@ -155,9 +144,6 @@ def ask(
     warnings: List[str] = []
     if result.context_chunk_count == 0:
         warnings.append("no_relevant_context")
-    indexed_with = _indexed_with_provider(database_url, record.id)
-    if indexed_with and indexed_with != embedding_name:
-        warnings.append("embedding_provider_mismatch")
 
     return AskResponse(
         repository_id=record.id,

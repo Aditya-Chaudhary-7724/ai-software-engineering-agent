@@ -12,7 +12,7 @@ environment — see .env.example). Cleans up everything it creates.
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/manual_graph_demo.py
+    .venv311/bin/python backend/scripts/manual_graph_demo.py
 """
 
 import sys

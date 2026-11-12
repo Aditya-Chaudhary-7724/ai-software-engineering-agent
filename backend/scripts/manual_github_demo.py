@@ -26,7 +26,7 @@ GitHub plus local-only git operations.
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/manual_github_demo.py
+    .venv311/bin/python backend/scripts/manual_github_demo.py
 """
 
 import getpass

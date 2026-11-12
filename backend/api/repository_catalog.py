@@ -12,7 +12,7 @@ never serialized into a response (see `api/schemas.py`).
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import psycopg
 
@@ -76,20 +76,29 @@ def _run(database_url: str, operation):
         conn.close()
 
 
-def list_repositories(database_url: str, limit: int, offset: int) -> Tuple[List[RepositoryRecord], int]:
+def list_repositories(
+    database_url: str, limit: int, offset: int, only_ids: Optional[FrozenSet[int]] = None
+) -> Tuple[List[RepositoryRecord], int]:
+    """`only_ids` restricts the listing (and its total) to those ids, e.g.
+    the demo's repositories; None lists everything."""
+    restricted = only_ids is not None
+    params = {"limit": limit, "offset": offset, "ids": sorted(only_ids or ())}
+    where = "WHERE r.id = ANY(%(ids)s)" if restricted else ""
+
     def operation(cur) -> Tuple[List[RepositoryRecord], int]:
-        cur.execute("SELECT COUNT(*) FROM repositories")
+        cur.execute(f"SELECT COUNT(*) FROM repositories r {where}", params)
         total = cur.fetchone()[0]
         cur.execute(
             f"""
             SELECT {_REPOSITORY_SUMMARY_COLUMNS}
             FROM repositories r
             LEFT JOIN code_chunks c ON c.repository_id = r.id
+            {where}
             GROUP BY r.id
             ORDER BY r.ingested_at DESC, r.id DESC
             LIMIT %(limit)s OFFSET %(offset)s
             """,
-            {"limit": limit, "offset": offset},
+            params,
         )
         return [_record_from_row(row) for row in cur.fetchall()], total
 

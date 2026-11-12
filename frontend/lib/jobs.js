@@ -89,6 +89,8 @@ const JOB_ERRORS = {
   worker_interrupted: 'The job was interrupted (the backend stopped while it ran). Submit it again.',
   repository_files_unavailable: 'The repository’s files are no longer on the server.',
   repository_not_found: 'Repository not found.',
+  schema_out_of_date: 'The database schema is out of date (run backend/scripts/apply_schema.py), so nothing was indexed.',
+  embedding_not_configured: 'The embedding model is not configured on the server, so nothing was indexed.',
   internal_error: 'The job failed unexpectedly. Details are in the backend log.',
   job_not_found: 'This job no longer exists.',
   unauthenticated: 'Your session has expired. Sign in again.',

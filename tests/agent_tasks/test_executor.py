@@ -196,3 +196,49 @@ def test_missing_repository_files_fail_with_a_stable_code(indexed_repo, tmp_path
     _run_once(store, executor)
     done = store.get(task.id)
     assert done.status == "failed" and done.error_code == "repository_files_unavailable"
+
+
+def test_an_llm_quota_error_fails_the_task_with_its_own_code_and_writes_nothing(indexed_repo):
+    from rag.llm.exceptions import LLMQuotaExceededError
+    from rag.llm.stub_provider import StubLLMProvider
+
+    class QuotaLLM(StubLLMProvider):
+        def generate(self, prompt, system=None):
+            raise LLMQuotaExceededError("429", retry_after_seconds=5)
+
+    store, executor = make_executor()
+    executor._deps.llm_provider_factory = lambda: (QuotaLLM(), "groq")
+    task = _submit(store, indexed_repo)
+
+    assert _run_once(store, executor)
+
+    failed = store.get(task.id)
+    assert (failed.status, failed.error_code) == ("failed", "llm_quota_exceeded")
+    assert (indexed_repo["root"] / "main.py").read_text() == ORIGINAL_CONTENT
+    assert not checkpoint_exists(task.id)
+
+
+def test_a_misconfigured_llm_fails_the_task_as_not_configured(indexed_repo, monkeypatch):
+    from rag.llm.factory import configured_llm_provider
+
+    monkeypatch.setenv("LLM_PROVIDER", "groq")  # no key, no model
+    store, executor = make_executor()
+    executor._deps.llm_provider_factory = configured_llm_provider
+    task = _submit(store, indexed_repo)
+
+    assert _run_once(store, executor)
+
+    assert (store.get(task.id).status, store.get(task.id).error_code) == ("failed", "llm_not_configured")
+
+
+def test_a_repository_indexed_with_another_embedding_model_fails_as_reindex_required(indexed_repo):
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute("UPDATE repositories SET embedding_model = 'openai' WHERE id = %s", (indexed_repo["repository_id"],))
+    store, executor = make_executor()
+    task = _submit(store, indexed_repo)
+
+    assert _run_once(store, executor)
+
+    failed = store.get(task.id)
+    assert (failed.status, failed.error_code) == ("failed", "reindex_required")
+    assert (indexed_repo["root"] / "main.py").read_text() == ORIGINAL_CONTENT

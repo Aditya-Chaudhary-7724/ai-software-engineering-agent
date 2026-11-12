@@ -56,7 +56,9 @@ def _evaluate_case(
     conn = vector_store.connect()
     try:
         query_embedding = embedding_provider.embed([case.query])[0]
-        vector_hits = vector_store.similarity_search(conn, query_embedding, top_k=_TOP_K, repository_id=repository_id)
+        vector_hits = vector_store.similarity_search(
+            conn, query_embedding, top_k=_TOP_K, repository_id=repository_id, embedding_model=embedding_provider.model_id
+        )
         keyword_hits = keyword_search(conn, case.query, top_k=_TOP_K, repository_id=repository_id)
     finally:
         conn.close()

@@ -23,7 +23,6 @@ embedded — never executed.
 """
 
 import logging
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,7 +47,8 @@ from graph.schema import apply_constraints
 from ingestion.service import IngestionService
 from parsing.service import ParsingService
 from vectorstore.embeddings.base import EmbeddingProvider
-from vectorstore.embeddings.local_provider import DeterministicLocalEmbeddingProvider
+from vectorstore.embeddings.factory import configured_embedding_provider
+from vectorstore.exceptions import EmbeddingConfigurationError, SchemaOutOfDateError
 from vectorstore.service import IndexingService
 from vectorstore.store import VectorStore
 
@@ -74,15 +74,12 @@ DEFAULT_MAX_REPOSITORY_KB = 250_000  # GitHub-reported size; ~250 MB
 
 
 def default_embedding_provider() -> Tuple[EmbeddingProvider, str]:
-    """Real embeddings when EMBEDDING_API_KEY is configured, otherwise the
-    deterministic, NON-semantic local provider used throughout this project.
-    The name is recorded on the job so the UI never implies semantic search
-    quality the index doesn't have."""
-    if os.environ.get("EMBEDDING_API_KEY"):
-        from vectorstore.embeddings.openai_provider import OpenAIEmbeddingProvider
-
-        return OpenAIEmbeddingProvider(), "openai"
-    return DeterministicLocalEmbeddingProvider(), "deterministic_local"
+    """The configured embedding provider (vectorstore/embeddings/factory.py;
+    EMBEDDING_PROVIDER, or the original OpenAI-if-key-else-hash rule when
+    unset). The name is recorded on the job so the UI never implies semantic
+    search quality the index doesn't have. Kept under this name because the
+    Ask route and the agent executor import it."""
+    return configured_embedding_provider()
 
 
 def canonical_github_reference(url: str):
@@ -156,6 +153,9 @@ class IngestionExecutor:
                 raise JobFailure("unsupported_job_type")
             graph_status, graph_progress = self._build_graph_if_requested(job)
             self._store.complete(job.id, repository_id=repository_id, graph_status=graph_status, progress={**progress, **graph_progress})
+        except EmbeddingConfigurationError:
+            logger.warning("job refused: the embedding provider is misconfigured", extra={"job_id": job.id})
+            self._store.fail(job.id, "embedding_not_configured", GRAPH_NOT_RUN if job.build_graph else None)
         except JobFailure as failure:
             logger.warning("job failed", extra={"job_id": job.id, "error_code": failure.code})
             self._store.fail(job.id, failure.code, GRAPH_NOT_RUN if job.build_graph else None)
@@ -238,6 +238,11 @@ class IngestionExecutor:
             result = IndexingService(embedding_provider, VectorStore(self._deps.database_url)).index_repository(str(root))
         except psycopg.OperationalError:
             raise JobFailure("database_unavailable")
+        except SchemaOutOfDateError:
+            # Indexing never applies the schema itself; the operator must run
+            # backend/scripts/apply_schema.py.
+            logger.warning("job refused: database schema out of date (run apply_schema.py)", extra={"job_id": job.id})
+            raise JobFailure("schema_out_of_date")
         except Exception:
             logger.exception("indexing failed", extra={"job_id": job.id})
             raise JobFailure("indexing_failed")

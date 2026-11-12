@@ -118,3 +118,20 @@ gunicorn==23.0.0
 #   Restart/cross-process behaviour is verified in
 #   tests/agent_tasks/test_checkpointing.py.
 langgraph-checkpoint-postgres==2.0.25
+
+# Local embeddings ($0 deployment): fastembed runs open-source ONNX
+#   embedding models on ONNX Runtime, in-process, with no API key and no
+#   network calls at embedding time (vectorstore/embeddings/
+#   fastembed_provider.py). Chosen over sentence-transformers because it
+#   needs no PyTorch: measured on linux/arm64 (the Oracle A1 target) it
+#   adds 226 MB of packages, and bge-small at batch 8 peaked at 524 MiB.
+#   Alternatives: OpenAI embeddings (paid), sentence-transformers (PyTorch,
+#   much larger on arm64), self-hosting a separate embedding server (more
+#   infrastructure for no benefit at this scale).
+#   fastembed 0.9.1 requires Python >= 3.10, hence the marker: the image
+#   and CI run 3.11; on an older local interpreter the provider reports
+#   itself as not installed instead of breaking `pip install`.
+#   onnxruntime is pinned explicitly (it is fastembed's native inference
+#   engine and ships the linux/aarch64 wheel the deployment depends on).
+fastembed==0.9.1; python_version >= "3.10"
+onnxruntime==1.31.1; python_version >= "3.10"

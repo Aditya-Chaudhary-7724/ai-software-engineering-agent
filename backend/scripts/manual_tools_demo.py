@@ -11,7 +11,7 @@ everything it creates.
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/manual_tools_demo.py
+    .venv311/bin/python backend/scripts/manual_tools_demo.py
 """
 
 import getpass

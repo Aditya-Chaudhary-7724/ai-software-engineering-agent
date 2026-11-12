@@ -56,7 +56,19 @@ _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 _SECRET_VALUE_PATTERNS = (
     re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),  # GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),  # OpenAI/Anthropic-style secret keys
+    # OpenAI/Anthropic-style secret keys. The previous `sk-[A-Za-z0-9]{20,}`
+    # missed Anthropic keys (`sk-ant-api03-...`) and OpenAI project keys
+    # (`sk-proj-...`): the hyphen ended the match before 20 characters. Now:
+    # any short hyphenated prefixes, then a random run of >= 20 characters
+    # (which hyphenated prose like "sk-learn-is-a-library" never has), then
+    # the rest of the key including base64url `-`/`_`. The lookbehind keeps
+    # words like "disk-..." out. Linear-time: `[...]+-` cannot contain "-".
+    re.compile(r"(?<![A-Za-z0-9_-])sk-(?:[A-Za-z0-9_]+-)*[A-Za-z0-9_]{20,}[A-Za-z0-9_-]*"),
+    # Groq API keys. Underscores and hyphens are allowed in the body (the
+    # earlier [A-Za-z0-9] stopped at the first "_" and left the rest of
+    # such a key visible); the lookbehind keeps identifiers that merely
+    # contain "gsk_" (e.g. "my_gsk_setting") out.
+    re.compile(r"(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9_-]{20,}"),
     re.compile(r"[Bb]earer\s+[A-Za-z0-9._-]{10,}"),  # "Bearer <token>" header values
     re.compile(r"postgresql(\+\w+)?://[^/\s:]*:[^/\s@]+@"),  # a DB URL with an embedded password
 )

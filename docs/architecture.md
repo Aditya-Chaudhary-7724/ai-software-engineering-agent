@@ -64,6 +64,8 @@ Explicitly out of scope for Phase 2: SQL entity extraction (functions/classes do
 
 Located at `backend/vectorstore/`. Chunks Phase 2's parsed output, embeds each chunk via a pluggable provider, and stores/searches the result in PostgreSQL + pgvector.
 
+**Embedding providers (2026-11-12): selected by `EMBEDDING_PROVIDER`** in one factory, `vectorstore/embeddings/factory.py` (`openai` | `fastembed` | `deterministic_local`; unset keeps the original OpenAI-if-key-else-hash rule; invalid settings are refused with `embedding_not_configured`, never stubbed). `fastembed` runs an open-source model in-process on ONNX Runtime: no key, no API calls, no PyTorch. Only allowlisted models with a known dimension and a pinned Hugging Face commit (`backend/config.py` `FASTEMBED_MODELS`; today `BAAI/bge-small-en-v1.5`, 384 dimensions, `Qdrant/bge-small-en-v1.5-onnx-Q@aa8f8b06…`). The model is always loaded from a local directory: `EMBEDDING_MODEL_PATH` (baked into the image), else a one-time download of exactly that revision; fastembed's own downloader is never used. Loaded once per process; `EMBEDDING_BATCH_SIZE` (default 8) bounds peak memory. A vector of the wrong dimension raises `EmbeddingDimensionError` instead of being stored. **Verified on linux/arm64, Python 3.11.17** (throwaway container, real `requirements.txt`): real model tests, then the same tests with networking disabled against the baked directory; tree-sitter parsing tests pass there too; pip-audit of the 77 shipped packages found nothing beyond the accepted list. Measured (2 CPUs, Apple M5 host, so the Oracle A1 will be slower): batch 8, 524 MiB peak, about 8.5 chunks/s. fastembed needs Python >= 3.10, so on the 3.9 local venv the real-model tests skip. **Storage (2026-11-12):** one vector column per supported dimension (`vectorstore/models.py` `EMBEDDING_COLUMNS`: 1536 → `embedding`, 384 → `embedding_384`; column names come from that allowlist via `psycopg.sql.Identifier`, any other dimension is refused before embedding), exactly one per chunk (database CHECK). Every provider has a `model_id`, recorded as `repositories.embedding_model` in the same transaction that replaces the chunks. `VectorStore.similarity_search` requires the query's `embedding_model`: for one repository a different or unrecorded model raises `ReindexRequiredError` (Ask: `409 reindex_required`), and a cross-repository search only searches repositories of that model. This fixes a silent bug: the query used to be embedded with whatever provider was configured at the time, and vectors from another model of the same dimension were ranked as if comparable (demonstrated against the old code: 1 hit, no error). The Ask route's earlier warning-only check (`embedding_provider_mismatch`) is removed.
+
 Components:
 - `chunking.py` — one `CodeChunk` per class/function (sliced from source using Phase 2's line ranges), with a whole-file fallback for source files that produced no symbols (currently only SQL).
 - `embeddings/base.py` — the `EmbeddingProvider` interface (`embed(texts) -> vectors`).
@@ -88,6 +90,8 @@ Coordinates retrieval, reasoning, and tool use. Will be implemented as a statefu
 **Status: IMPLEMENTED (Phase 4; retrieval/ranking LOCAL TESTED, LLM answer generation REQUIRES CREDENTIALS)**
 
 Located at `backend/rag/`. Pipeline: question → query embedding → vector retrieval (Phase 3) + keyword retrieval → merge/rank → bounded context assembly → LLM → grounded answer with source citations.
+
+**LLM providers (2026-11-12): selected by `LLM_PROVIDER`** in one factory, `rag/llm/factory.py`, used by Ask and agent tasks. `anthropic` (`AnthropicLLMProvider`), `groq` (`OpenAICompatibleLLMProvider` against Groq's OpenAI-compatible API, reusing the existing `openai` SDK, so no new dependency) or `stub`. Unset keeps the original rule (Anthropic if `LLM_API_KEY`, else the stub). An invalid configuration is reported by `check_production_config.py` and refused with `503 llm_not_configured`, never silently stubbed. The agent needs no provider tool calling: `LLMProvider.generate(prompt, system) -> str` only writes answers and file contents; routing (`agent/classification.py`) and tools are Python. The OpenAI-compatible provider disables the SDK's hidden 429 retries (each would spend free-tier quota), maps 429 to `LLMQuotaExceededError` (`429 llm_quota_exceeded`, `Retry-After` when the provider sent one; agent tasks fail with `llm_quota_exceeded`), returns only `message.content` (a reasoning model's reasoning field is never read, and an inline `<think>` block is stripped), and treats an empty answer as an error. Tested with a fake client only; **not yet run against the real Groq API.**
 
 Components:
 - `keyword_search.py` — PostgreSQL full-text search over `code_chunks.content`, using an OR of the question's word tokens (`to_tsquery`) rather than `plainto_tsquery`'s implicit AND, since requiring every word in a natural-language question to match is too strict for this use case. Backed by a GIN index (`schema.sql`).
@@ -328,17 +332,17 @@ Located at `backend/evaluation/`. A real, quantitative evaluation framework cove
 
 **Modification and testing-loop evaluation reuse Phase 9/10's own real mechanisms** — `ModificationService`, `AgentService`, the real `apply_change`/`run_tests_after_apply` graph nodes — rather than simulating them: approval-required, stale-change-refused, single-file-scope, and "a failing change is reported as a failure, never silently accepted" are all checked against real writes to real temporary files, with one case running a real Docker container (skipped honestly if Docker isn't reachable). The testing-loop cases use `ScriptedTestRunner` (see above) to isolate the bounded-iteration/wall-clock/approval-per-retry guarantees from sandbox/LLM variability — real end-to-end Docker execution of that same loop is demonstrated separately in `backend/scripts/manual_agent_demo.py`'s scenario 4.
 
-**What's genuinely tested locally vs. what requires a real LLM:** all 17 evaluation cases pass against real PostgreSQL, real Neo4j, and real Docker in this environment (`.venv/bin/python backend/scripts/run_evaluation.py`), and the evaluation CODE ITSELF (metric math, dataset structure, report rendering, and — importantly — each runner's ability to correctly detect a deliberately-wrong expectation as a failure, not only ever report success) is covered by 58 tests in `tests/evaluation/`. The one metric that requires a real `LLM_API_KEY` (`llm_judge_score`) is opt-in via `--llm-judge` and was not exercised live in this environment (no key present) — its response-parsing logic is unit-tested with a fake provider instead.
+**What's genuinely tested locally vs. what requires a real LLM:** all 17 evaluation cases pass against real PostgreSQL, real Neo4j, and real Docker in this environment (`.venv311/bin/python backend/scripts/run_evaluation.py`), and the evaluation CODE ITSELF (metric math, dataset structure, report rendering, and — importantly — each runner's ability to correctly detect a deliberately-wrong expectation as a failure, not only ever report success) is covered by 58 tests in `tests/evaluation/`. The one metric that requires a real `LLM_API_KEY` (`llm_judge_score`) is opt-in via `--llm-judge` and was not exercised live in this environment (no key present) — its response-parsing logic is unit-tested with a fake provider instead.
 
 Explicitly out of scope for Phase 12: any invented or hard-coded performance number (every figure in this section and in a report's output comes from an actual run, never typed in); code-generation *correctness* evaluation beyond "did the modification/testing-loop mechanism behave safely" (real code quality still requires `LLM_API_KEY`, the same caveat as every LLM-dependent phase); and a large benchmark corpus (the dataset is deliberately small enough to read in full — see `dataset.py` — per this phase's own instruction that it be "transparent enough that an interviewer can inspect it").
 
 **Running it:**
 ```bash
 set -a; source .env; set +a
-.venv/bin/python -m pytest tests/evaluation                       # 58 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
-.venv/bin/python backend/scripts/run_evaluation.py                 # prints the full report; exit code reflects pass/fail
-.venv/bin/python backend/scripts/run_evaluation.py --json out.json # also export the raw results as JSON
-.venv/bin/python backend/scripts/run_evaluation.py --llm-judge      # additionally scores RAG answers with a real LLM (requires LLM_API_KEY)
+.venv311/bin/python -m pytest tests/evaluation                       # 58 tests; DB/Neo4j/Docker-backed ones skip cleanly if unreachable
+.venv311/bin/python backend/scripts/run_evaluation.py                 # prints the full report; exit code reflects pass/fail
+.venv311/bin/python backend/scripts/run_evaluation.py --json out.json # also export the raw results as JSON
+.venv311/bin/python backend/scripts/run_evaluation.py --llm-judge      # additionally scores RAG answers with a real LLM (requires LLM_API_KEY)
 ```
 
 ### Observability
@@ -405,9 +409,9 @@ Trace (trace_id == thread_id — see below)
 
 **How to inspect a trace locally** — no external service, no credentials, ever required for this path:
 ```bash
-.venv/bin/python backend/scripts/inspect_trace.py --list                 # every trace_id recorded so far
-.venv/bin/python backend/scripts/inspect_trace.py <trace_id>              # rendered, indented span tree
-.venv/bin/python backend/scripts/inspect_trace.py <trace_id> --json       # the raw trace as JSON
+.venv311/bin/python backend/scripts/inspect_trace.py --list                 # every trace_id recorded so far
+.venv311/bin/python backend/scripts/inspect_trace.py <trace_id>              # rendered, indented span tree
+.venv311/bin/python backend/scripts/inspect_trace.py <trace_id> --json       # the raw trace as JSON
 ```
 `backend/scripts/manual_agent_demo.py` now constructs a real `Tracer(JSONFileRecorder())` and prints the `thread_id`/`trace_id` for each scenario it runs, so running that script and then `inspect_trace.py` on the ID it prints is a complete, self-contained walkthrough.
 

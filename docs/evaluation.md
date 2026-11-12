@@ -17,17 +17,17 @@ Two kinds of results, never added together:
 set -a; source .env; set +a                     # from the repository root
 
 # 1. Regression tests (the source of truth for correctness)
-.venv/bin/python -m pytest -q                    # backend
+.venv311/bin/python -m pytest -q                    # backend
 (cd frontend && npm test && npm run build)       # frontend
-.venv/bin/python -m mypy backend
+.venv311/bin/python -m mypy backend
 
 # 2. Evaluation report — full deterministic run (recommended)
-.venv/bin/python backend/scripts/run_evaluation.py \
+.venv311/bin/python backend/scripts/run_evaluation.py \
     --isolated-database-url "postgresql://$USER@localhost:5432/ai_swe_agent_test" \
     --with-regression --json /tmp/eval.json
 
 # 3. Real-model evaluation (only with real keys; costs API credits)
-.venv/bin/python backend/scripts/run_evaluation.py --real-llm --real-embeddings
+.venv311/bin/python backend/scripts/run_evaluation.py --real-llm --real-embeddings
 ```
 
 The exit code is non-zero if any evaluated case failed. Skipped cases do

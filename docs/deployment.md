@@ -127,6 +127,8 @@ Gunicorn runs `WEB_CONCURRENCY` worker processes (1 by default), and **each star
 - **Credentials / TLS**: `DATABASE_URL` already supports `sslmode=require` (a standard `psycopg`/libpq connection-string parameter) — not hardcoded anywhere in this codebase, so enabling it in production is a configuration change (setting `DATABASE_URL` accordingly), not a code change.
 - **No destructive operation was run against any existing database in this phase.** `apply_schema.py` was tested against this project's own local dev database (already containing this schema) and confirmed to be a safe no-op.
 
+**Update (2026-11-12): schema change for a second embedding model.** `schema.sql` now adds `code_chunks.embedding_384 VECTOR(384)` (own HNSW index), `repositories.embedding_model`, relaxes `NOT NULL` on `code_chunks.embedding`, and adds `CHECK (num_nonnulls(embedding, embedding_384) = 1)`. Still additive in effect: no data is changed or removed, and every existing row satisfies the CHECK. Each `ALTER` runs inside a `DO` block only if the catalog says it is needed, so re-applying takes no `ALTER TABLE` lock. Existing repositories get `embedding_model = NULL` and must be **re-indexed** before vector search works on them (`409 reindex_required`; agent tasks fail with `reindex_required`); keyword search data is unaffected. Tested on throwaway databases, including an upgrade from the pre-change schema with data kept (`tests/vectorstore/test_embedding_models.py`). **Not yet applied to the development database** (it applies only when `apply_schema.py` runs; see section 14: indexing no longer applies the schema). **Rollback:** an image from before this change still works against the migrated schema only while no repository has been indexed with a 384-dimension model (its searches would see NULL distances for those rows).
+
 ## 6. Neo4j
 
 **Status: IMPLEMENTED AND TESTED locally (Docker container); production hosting is a DOCUMENTED TARGET, explicitly not claimed as deployed.**
@@ -203,7 +205,7 @@ Verified this phase:
 - No secret appears in an observability trace or log line (Phase 13/14's `observability.redaction`, reused — not re-implemented — by `backend/api/health.py`'s own "never echo the raw exception" choice).
 - Production secrets are expected to be injected by whatever platform hosts the container (its own secret manager / environment variable injection) — never a file shipped in the image.
 
-**Update (F8): variables added since Phase 15.** `API_SERVICE_TOKEN` (server secret, ≥ 32 chars, shared with the frontend), `WORKSPACE_ROOT` (absolute, dedicated clone directory), `INGESTION_WORKER_ENABLED`, `INGESTION_MAX_REPOSITORY_KB`, `AGENT_WORKER_ENABLED`, `AGENT_APPROVAL_TTL_SECONDS`, `SANDBOX_ENABLED` (config; default off, see section 7), and `EVALUATION_DATABASE_URL` (evaluation only, never read by the API). Frontend variables are listed in section 3. `.env.example` and `frontend/.env.example` hold placeholders only. `check_production_config.py` reports set/unset only for settings (never a value), and, since 2026-11-12, the effective enabled/disabled state of feature flags (`SANDBOX_ENABLED`), which are not secrets.
+**Update (F8): variables added since Phase 15.** `API_SERVICE_TOKEN` (server secret, ≥ 32 chars, shared with the frontend), `WORKSPACE_ROOT` (absolute, dedicated clone directory), `INGESTION_WORKER_ENABLED`, `INGESTION_MAX_REPOSITORY_KB`, `AGENT_WORKER_ENABLED`, `AGENT_APPROVAL_TTL_SECONDS`, `SANDBOX_ENABLED` (config; default off, see section 7), `DEMO_API_SERVICE_TOKEN` (server secret, demo principal; `docs/security.md` section 13e) and `DEMO_REPOSITORY_IDS` (config), `LLM_PROVIDER`, `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_COMPLETION_TOKENS` (config) and `GROQ_API_KEY` (server secret; see `docs/architecture.md` → Retrieval Layer), and `EVALUATION_DATABASE_URL` (evaluation only, never read by the API). Frontend variables are listed in section 3. `.env.example` and `frontend/.env.example` hold placeholders only. `check_production_config.py` reports set/unset only for settings (never a value), and, since 2026-11-12, the effective enabled/disabled state of feature flags (`SANDBOX_ENABLED`), which are not secrets.
 
 ## 9. Health / Readiness
 
@@ -219,7 +221,7 @@ See section 4 and `backend/api/health.py`'s own module docstring for the full li
 
 ## 11. CI/CD
 
-**Status: `.github/workflows/ci.yml` — READY TO RUN, NOT YET VERIFIED ON GITHUB ACTIONS** (that needs a push; until a run is observed green, treat every claim about CI below as untested). Its YAML was parsed locally, and its pip-audit command was run locally against the built image (section 12). Nothing else in it has been observed passing on GitHub's runners.
+**Status: `.github/workflows/ci.yml` — VERIFIED ON GITHUB ACTIONS (2026-11-12).** **Verified on GitHub Actions (2026-11-12):** the first run, on commit `93f1d26` (pushed to `main` 2026-11-12), passed all 4 checks: `verify` and `frontend`, each for the `push` and `pull_request` events. Reported by the project owner from the repository's Actions tab (not observed from this development environment, which has no `gh` CLI). That run covers the workflow as of `93f1d26`; later commits (the Groq/fastembed providers and the schema changes) have not been through CI yet. Before that (F8), its YAML was only parsed locally and its pip-audit command run locally against the built image (section 12).
 
 Job `verify` (Postgres + pgvector and Neo4j service containers): installs pinned dependencies and pinned test tools (`pytest==8.4.2`, `mypy==1.19.1`, `types-requests`, `httpx`, `pip-audit==2.9.0`); creates a separate application database (`ai_swe_agent_app`, so the pytest guard below holds); builds the sandbox image; runs the full suite, `tests/security`, `mypy backend` and `git diff --check`; builds the backend image and checks non-root, `git` present and no `.env`; runs **pip-audit on the image's own `pip freeze`** against `.github/pip-audit-accepted.txt`; runs `check_production_config.py`.
 
@@ -243,7 +245,7 @@ Tests: `tests/test_f8_database_guard.py`.
 
 **Real-GitHub tests (F8):** 5 tests clone or query `octocat/Hello-World` unauthenticated (60 requests/hour per IP; CI runners share IPs). They now **skip with the reason** when fewer than 15 requests remain, instead of failing with `403 rate limit exceeded` (`tests/github_integration/conftest.py`). Found in F8 when repeated local runs exhausted the quota. The ingestion job itself handled it correctly, ending with `github_rate_limited`. Treat a CI run where they skipped as not having exercised GitHub.
 
-**Python version:** CI and the image use Python 3.11; this project's local `.venv` is 3.9.6. Results are close but not identical (e.g. PyPI offers newer starlette/requests only for ≥ 3.10). Recommended: move the local venv to 3.11.
+**Python version:** CI and the image use Python 3.11. **Update (2026-11-12):** local development now uses `.venv311` (Homebrew Python 3.11.18), matching them; the old 3.9.6 `.venv` is no longer used (fastembed also needs ≥ 3.10). Transitive dependencies are still not locked, so local and image package versions can still differ.
 
 ## 12. Dependency / Image Security
 
@@ -265,7 +267,7 @@ None of the 20 is **fixed**: the vulnerable code still ships. 4 are **mitigated*
 **Trial (2026-11-08, throwaway container, nothing changed in the repo):** `fastapi==0.133.0` (the first release without Starlette's `<1.0` cap), `starlette==1.3.1` and `requests==2.33.0` on Python 3.11. `pip check` was clean; the full suite gave 1081 passed and 0 failed; OSV found no known vulnerabilities in those three. That upgrade would fix 8 of the 20.
 
 **Upgrade path (not done in F8, deliberately):**
-1. Move the local venv to Python 3.11. On 3.9, PyPI offers at most starlette 0.49.3 and requests 2.32.5, which cannot fix the reachable advisories.
+1. ~~Move the local venv to Python 3.11.~~ Done 2026-11-12 (`.venv311`). On 3.9, PyPI offered at most starlette 0.49.3 and requests 2.32.5, which could not fix the reachable advisories.
 2. Upgrade `fastapi` to a release allowing starlette ≥ 1.3.1, and `requests` ≥ 2.33.0. Re-run the full suite.
 3. Separately, upgrade langgraph to 1.x with langgraph-checkpoint ≥ 4.1.1 and langgraph-checkpoint-postgres ≥ 3.1.3. That is a major version that touches the F6 checkpoint serializer; re-run `tests/agent_tasks` and the F7 lifecycle evaluation.
 
@@ -283,7 +285,7 @@ Then delete the fixed entries from the accept-list.
 
 ```bash
 set -a; source .env; set +a
-.venv/bin/python backend/scripts/check_production_config.py
+.venv311/bin/python backend/scripts/check_production_config.py
 ```
 
 Exit code `0` if every REQUIRED setting (`DATABASE_URL`) is configured, `1` otherwise — safe to wire into a deploy pipeline's pre-flight check.
@@ -291,6 +293,8 @@ Exit code `0` if every REQUIRED setting (`DATABASE_URL`) is configured, `1` othe
 ## 14. Database Migrations / Startup
 
 **Status: IMPLEMENTED AND TESTED.**
+
+**Update (2026-11-12): now actually the only step.** `IndexingService.index_repository` used to call `apply_schema` on every index, so a schema change could reach a database as a side effect of indexing. It now only checks: `schema_version` (one row, written by `apply_schema`; the number is `SCHEMA_VERSION` in `vectorstore/migrations.py`, and a test pins `schema.sql`'s hash to it so the schema cannot change without a version bump). Never applied or older → `SchemaOutOfDateError` ("schema out of date … run backend/scripts/apply_schema.py"), before any embedding work; ingestion jobs fail with `schema_out_of_date` and leave no checkout. A newer recorded version is accepted (additive schema) and never lowered. **Deploy order: run `apply_schema.py` before starting a new image** (the bootstrap script and the CD pipeline must run it explicitly). Tests: `tests/vectorstore/test_schema_version.py`. The evaluation suite still applies the schema to its own isolated evaluation database only.
 
 See section 5. `apply_schema.py` is the one explicit migration step; application startup (`backend/api/main.py`'s `lifespan`) does NOT run it, seed any data, or perform any mutating database call — confirmed by reading the `lifespan` function itself, which only configures logging and logs a line. No destructive operation exists anywhere in the startup path.
 
@@ -331,7 +335,7 @@ Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicat
 
 ## 19. Known Limitations (as of F8)
 
-- **Not deployed anywhere.** The CI workflow has **not yet been verified on GitHub Actions** (never run there).
+- **Not deployed anywhere.** The CI workflow passed on GitHub Actions on 2026-11-12 (commit `93f1d26`, section 11); there is still no CD.
 - **Tests do not run for agent tasks in a containerised API** (no Docker in the API image by design, and `SANDBOX_ENABLED` defaults to off). Changes are applied and reported as "tests not run", never verified (section 7).
 - **20 Python advisories accepted, with reasons** (section 12). The real fix needs Python 3.11 locally plus fastapi/requests and langgraph upgrades.
 - **Rollback of an applied agent change is not implemented.** An approved change is written to the clone; a failing test after approval is reported as such, never undone (`docs/evaluation.md` → "No rollback"; asserted by the `modsafety-failed-tests-no-rollback` evaluation case).
@@ -341,7 +345,7 @@ Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicat
 - **No PostgreSQL connection pooling** (connection per operation; adequate at single-operator scale).
 - **Neo4j is shared** by development, tests and evaluation, namespaced rather than isolated. It has no TLS locally, `restart=no`, and is **exposed on the LAN** (all interfaces); it needs the loopback binding before use on an untrusted network (section 6).
 - **No frontend container image and no Docker Compose file.** Two images and a Next.js process are wired by hand.
-- **Local Python 3.9 vs CI/image 3.11, and no transitive lock.** 26 of 63 shared packages differ, so local test runs do not test what ships. Run the suite in the image, or move to a 3.11 venv with a constraints file.
+- **No transitive lock.** Local development moved to Python 3.11 (`.venv311`, 2026-11-12), matching CI and the image, but transitive versions are still unpinned, so local runs may still differ from what ships. A constraints file would close this.
 
 ## 20. What Is Implemented and Tested
 
@@ -349,7 +353,7 @@ Phases 1–15 and frontend phases F1–F7 (see `docs/architecture.md`, `docs/sec
 
 ## 21. What Is Ready to Deploy But Not Deployed
 
-The backend image (built in F8; non-root `appuser`, Python 3.11.17), the frontend production build (`next build` / `next start`, run locally), and the CI workflow (two jobs, not run on GitHub). Each needs a real hosting target, TLS and secrets; none was provisioned.
+The backend image (built in F8; non-root `appuser`, Python 3.11.17), the frontend production build (`next build` / `next start`, run locally), and the CI workflow (two jobs; passed on GitHub Actions on 2026-11-12, section 11). Each needs a real hosting target, TLS and secrets; none was provisioned.
 
 ## 22. What Is Only a Documented Target Architecture
 
@@ -361,7 +365,7 @@ A dedicated sandbox-worker service so deployed agent tasks can run tests (sectio
 
 **Open items, stated precisely (2026-11-09):**
 - **Python advisories: mitigated, not fixed.** All 20 accepted advisories still ship (4 mitigated, 1 partly mitigated, 15 not reachable; section 12). Fixing them needs the separate Python 3.11 + dependency-upgrade workstream.
-- **CI: not yet verified on GitHub Actions.**
+- **CI: verified on GitHub Actions on 2026-11-12** (commit `93f1d26`, all 4 checks green; section 11).
 - **CSP: verified at the HTTP level; real-browser console check outstanding.**
 - **Neo4j: exposed on the LAN;** loopback binding needed before use on an untrusted network.
 - **Agent-task tests in a containerised API do not run** until the separate sandbox-worker workstream exists (section 7).

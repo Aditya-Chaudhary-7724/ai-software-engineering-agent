@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Query
 
 from api import repository_catalog
+from api.demo_scope import demo_repository_filter
 from api.dependencies import get_database_url, get_repository_record
 from api.repository_catalog import RepositoryRecord
 from api.schemas import RepositoryDetail, RepositoryList, RepositorySummary
@@ -33,8 +34,9 @@ def list_repositories(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     database_url: str = Depends(get_database_url),
+    only_ids=Depends(demo_repository_filter),
 ) -> RepositoryList:
-    records, total = repository_catalog.list_repositories(database_url, limit, offset)
+    records, total = repository_catalog.list_repositories(database_url, limit, offset, only_ids)
     return RepositoryList(repositories=[_summary(r) for r in records], total=total, limit=limit, offset=offset)
 
 

@@ -103,3 +103,31 @@ def test_no_github_write_or_unlisted_agent_routes_exist(app):
             assert forbidden not in route.path, route.path
         if "agent" in route.path or "decision" in route.path:
             assert route.path in AGENT_ROUTE_PATHS, route.path
+
+
+def test_capabilities_name_the_llm_provider_and_flag_a_misconfiguration(api_client, monkeypatch):
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert (body["llm_provider"], body["llm_provider_configured"]) == ("stub", False)
+
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert (body["llm_provider"], body["llm_provider_configured"]) == ("misconfigured", False)
+
+    monkeypatch.setenv("GROQ_API_KEY", _FAKE_SECRET)
+    monkeypatch.setenv("LLM_MODEL", "vendor/model-id")
+    response = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers())
+    assert (response.json()["llm_provider"], response.json()["llm_provider_configured"]) == ("groq", True)
+    assert _FAKE_SECRET not in response.text
+
+
+def test_capabilities_name_the_embedding_provider(api_client, monkeypatch):
+    monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert (body["embedding_provider"], body["embedding_provider_configured"]) == ("deterministic_local", False)
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fastembed")
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert (body["embedding_provider"], body["embedding_provider_configured"]) == ("fastembed", True)
+    monkeypatch.setenv("EMBEDDING_MODEL", "not/allowlisted")
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert body["embedding_provider"] == "misconfigured"

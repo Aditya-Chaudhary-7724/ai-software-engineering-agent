@@ -7,6 +7,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+# Python 3.11 venv matching the image and CI (fastembed needs >= 3.10)
+.venv311/
 venv/
 
 # Node

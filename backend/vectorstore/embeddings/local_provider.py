@@ -16,6 +16,7 @@ from vectorstore.models import EMBEDDING_DIMENSION
 
 class DeterministicLocalEmbeddingProvider(EmbeddingProvider):
     dimension = EMBEDDING_DIMENSION
+    model_id = "deterministic_local"
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [self._embed_one(text) for text in texts]

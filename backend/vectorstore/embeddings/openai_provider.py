@@ -29,6 +29,9 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             )
         self._client = OpenAI(api_key=resolved_key)
         self._model = model
+        # "openai" for the default model (the name earlier indexes recorded);
+        # any other model gets its own id, so it can never be mixed with it.
+        self.model_id = "openai" if model == DEFAULT_MODEL else f"openai:{model}"
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         response = self._client.embeddings.create(model=self._model, input=texts)

@@ -6,7 +6,7 @@ prints the extracted symbols per file.
 
 Run from the repository root:
 
-    .venv/bin/python backend/scripts/manual_parsing_demo.py
+    .venv311/bin/python backend/scripts/manual_parsing_demo.py
 """
 
 import sys

@@ -17,7 +17,7 @@ Requires reachable PostgreSQL (with pgvector) and Neo4j.
 Run from the repository root:
 
     set -a; source .env; set +a
-    .venv/bin/python backend/scripts/manual_hybrid_demo.py
+    .venv311/bin/python backend/scripts/manual_hybrid_demo.py
 """
 
 import getpass

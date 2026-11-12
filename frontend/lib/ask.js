@@ -57,13 +57,6 @@ export function answerNotices(response) {
   } else if (response.retrieval.graph === 'used' && response.retrieval.graph_built === false) {
     notices.push({ tone: 'info', title: 'No graph for this repository', text: 'No knowledge graph has been built for it, so graph expansion found nothing.' });
   }
-  if (response.warnings.includes('embedding_provider_mismatch')) {
-    notices.push({
-      tone: 'warn',
-      title: 'Embedding mismatch',
-      text: 'This repository was indexed with a different embedding provider than the one answering now; vector matches are unreliable until it is re-indexed.',
-    });
-  }
   if (response.warnings.includes('no_relevant_context')) {
     notices.push({ tone: 'info', title: 'No relevant code found', text: 'Retrieval returned no indexed code for this question, so nothing could be cited.' });
   }
@@ -74,6 +67,10 @@ const ASK_ERRORS = {
   ...SERVER_SIDE_MESSAGES,
   invalid_question: 'Enter a question (up to 2,000 characters).',
   repository_not_found: 'That repository no longer exists.',
+  llm_quota_exceeded: 'The free AI quota is used up for now. Try again in a few minutes.',
+  reindex_required: 'This repository was indexed with a different embedding model than the server now uses. Re-index it to search it.',
+  embedding_not_configured: 'The embedding model is not configured on the server.',
+  llm_not_configured: 'The AI provider is not configured on the server.',
   answer_generation_failed: 'The answer could not be generated (the LLM or embedding provider failed). Details are in the backend log.',
   database_unavailable: 'The database is unavailable.',
   backend_unreachable: 'The backend is not reachable.',
