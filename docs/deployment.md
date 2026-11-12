@@ -221,7 +221,7 @@ See section 4 and `backend/api/health.py`'s own module docstring for the full li
 
 ## 11. CI/CD
 
-**Status: `.github/workflows/ci.yml` — READY TO RUN, NOT YET VERIFIED ON GITHUB ACTIONS** (that needs a push; until a run is observed green, treat every claim about CI below as untested). Its YAML was parsed locally, and its pip-audit command was run locally against the built image (section 12). Nothing else in it has been observed passing on GitHub's runners.
+**Status: `.github/workflows/ci.yml` — VERIFIED ON GITHUB ACTIONS (2026-11-12).** **Verified on GitHub Actions (2026-11-12):** the first run, on commit `93f1d26` (pushed to `main` 2026-11-12), passed all 4 checks: `verify` and `frontend`, each for the `push` and `pull_request` events. Reported by the project owner from the repository's Actions tab (not observed from this development environment, which has no `gh` CLI). That run covers the workflow as of `93f1d26`; later commits (the Groq/fastembed providers and the schema changes) have not been through CI yet. Before that (F8), its YAML was only parsed locally and its pip-audit command run locally against the built image (section 12).
 
 Job `verify` (Postgres + pgvector and Neo4j service containers): installs pinned dependencies and pinned test tools (`pytest==8.4.2`, `mypy==1.19.1`, `types-requests`, `httpx`, `pip-audit==2.9.0`); creates a separate application database (`ai_swe_agent_app`, so the pytest guard below holds); builds the sandbox image; runs the full suite, `tests/security`, `mypy backend` and `git diff --check`; builds the backend image and checks non-root, `git` present and no `.env`; runs **pip-audit on the image's own `pip freeze`** against `.github/pip-audit-accepted.txt`; runs `check_production_config.py`.
 
@@ -335,7 +335,7 @@ Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicat
 
 ## 19. Known Limitations (as of F8)
 
-- **Not deployed anywhere.** The CI workflow has **not yet been verified on GitHub Actions** (never run there).
+- **Not deployed anywhere.** The CI workflow passed on GitHub Actions on 2026-11-12 (commit `93f1d26`, section 11); there is still no CD.
 - **Tests do not run for agent tasks in a containerised API** (no Docker in the API image by design, and `SANDBOX_ENABLED` defaults to off). Changes are applied and reported as "tests not run", never verified (section 7).
 - **20 Python advisories accepted, with reasons** (section 12). The real fix needs Python 3.11 locally plus fastapi/requests and langgraph upgrades.
 - **Rollback of an applied agent change is not implemented.** An approved change is written to the clone; a failing test after approval is reported as such, never undone (`docs/evaluation.md` → "No rollback"; asserted by the `modsafety-failed-tests-no-rollback` evaluation case).
@@ -353,7 +353,7 @@ Phases 1–15 and frontend phases F1–F7 (see `docs/architecture.md`, `docs/sec
 
 ## 21. What Is Ready to Deploy But Not Deployed
 
-The backend image (built in F8; non-root `appuser`, Python 3.11.17), the frontend production build (`next build` / `next start`, run locally), and the CI workflow (two jobs, not run on GitHub). Each needs a real hosting target, TLS and secrets; none was provisioned.
+The backend image (built in F8; non-root `appuser`, Python 3.11.17), the frontend production build (`next build` / `next start`, run locally), and the CI workflow (two jobs; passed on GitHub Actions on 2026-11-12, section 11). Each needs a real hosting target, TLS and secrets; none was provisioned.
 
 ## 22. What Is Only a Documented Target Architecture
 
@@ -365,7 +365,7 @@ A dedicated sandbox-worker service so deployed agent tasks can run tests (sectio
 
 **Open items, stated precisely (2026-11-09):**
 - **Python advisories: mitigated, not fixed.** All 20 accepted advisories still ship (4 mitigated, 1 partly mitigated, 15 not reachable; section 12). Fixing them needs the separate Python 3.11 + dependency-upgrade workstream.
-- **CI: not yet verified on GitHub Actions.**
+- **CI: verified on GitHub Actions on 2026-11-12** (commit `93f1d26`, all 4 checks green; section 11).
 - **CSP: verified at the HTTP level; real-browser console check outstanding.**
 - **Neo4j: exposed on the LAN;** loopback binding needed before use on an untrusted network.
 - **Agent-task tests in a containerised API do not run** until the separate sandbox-worker workstream exists (section 7).
