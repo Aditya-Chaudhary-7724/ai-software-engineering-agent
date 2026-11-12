@@ -79,12 +79,19 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Gunicorn (process manager, handles worker respawn/graceful SIGTERM
 # shutdown) with Uvicorn's ASGI worker class — the standard, documented
 # production pairing for a FastAPI application. No --reload (that's a
-# development-only flag); --workers is intentionally small and
-# overridable via the WEB_CONCURRENCY env var Gunicorn itself reads.
+# development-only flag).
+#
+# Worker count: deliberately NO --workers flag. Gunicorn's own default is
+# the WEB_CONCURRENCY environment variable, or 1 when it is unset — but an
+# explicit --workers on the command line OVERRIDES WEB_CONCURRENCY, so a
+# hardcoded flag here silently ignored it (verified: WEB_CONCURRENCY=1
+# still started 2 workers). 1 suits small hosts (see docs/deployment.md
+# section 4 for measured memory); each worker also starts its own
+# ingestion/agent worker threads (safe: claims use FOR UPDATE SKIP LOCKED).
+# Guarded by tests/test_dockerfile.py.
 CMD ["gunicorn", "api.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", \
-     "--workers", "2", \
      "--timeout", "60", \
      "--access-logfile", "-", \
      "--error-logfile", "-"]
