@@ -18,6 +18,7 @@ check-then-act sequence in Python:
 """
 
 import uuid
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 import psycopg
@@ -27,6 +28,7 @@ from agent_tasks.models import (
     ACTION_RESUME,
     ACTION_START,
     STATUS_AWAITING_APPROVAL,
+    STATUS_PROPOSED,
     STATUS_QUEUED,
     STATUS_RUNNING,
     AgentTask,
@@ -37,7 +39,8 @@ _COLUMNS = (
     "id, repository_id, target_path, instruction, route, status, action, decision_approved, decided_at, "
     "approvals_granted, proposal_interrupt_id, proposal_diff, proposal_diff_sha256, proposal_relative_path, "
     "proposal_message, proposal_fix_iteration, approval_expires_at, execution_log, final_response, sources, "
-    "outcome, error_code, created_at, started_at, heartbeat_at, finished_at, updated_at"
+    "outcome, error_code, created_at, started_at, heartbeat_at, finished_at, updated_at, "
+    "proposal_only, demo_usage_day, demo_reserved_tokens, demo_used_tokens, demo_settled"
 )
 
 
@@ -70,6 +73,11 @@ def _row_to_task(row: tuple) -> AgentTask:
         heartbeat_at=row[24],
         finished_at=row[25],
         updated_at=row[26],
+        proposal_only=bool(row[27]),
+        demo_usage_day=row[28],
+        demo_reserved_tokens=row[29],
+        demo_used_tokens=row[30],
+        demo_settled=bool(row[31]),
     )
 
 
@@ -93,26 +101,52 @@ class AgentTaskStore:
 
     # -- submission and reads ---------------------------------------------
 
-    def create(self, *, repository_id: int, target_path: str, instruction: str, route: str) -> Optional[AgentTask]:
+    def create(
+        self,
+        *,
+        repository_id: int,
+        target_path: str,
+        instruction: str,
+        route: str,
+        proposal_only: bool = False,
+        demo_usage_day: Optional[date] = None,
+        demo_reserved_tokens: Optional[int] = None,
+        conn: Optional[psycopg.Connection] = None,
+    ) -> Optional[AgentTask]:
         """The new queued task, or None if this repository already has an
-        active (queued/running/awaiting-approval) task."""
-        return self._one(
-            f"""
-            INSERT INTO agent_tasks (id, repository_id, target_path, instruction, route, status, action)
-            VALUES (%(id)s, %(repository_id)s, %(target_path)s, %(instruction)s, %(route)s, %(status)s, %(action)s)
+        active (queued/running/awaiting-approval) task.
+
+        With `conn`, the INSERT runs in the caller's open transaction and is
+        NOT committed here: the demo submission uses that to record its limit
+        event, its token reservation and the task row atomically."""
+        sql = f"""
+            INSERT INTO agent_tasks (
+                id, repository_id, target_path, instruction, route, status, action,
+                proposal_only, demo_usage_day, demo_reserved_tokens
+            )
+            VALUES (
+                %(id)s, %(repository_id)s, %(target_path)s, %(instruction)s, %(route)s, %(status)s, %(action)s,
+                %(proposal_only)s, %(demo_usage_day)s, %(demo_reserved_tokens)s
+            )
             ON CONFLICT (repository_id) WHERE status IN ('queued', 'running', 'awaiting_approval') DO NOTHING
             RETURNING {_COLUMNS}
-            """,
-            {
-                "id": str(uuid.uuid4()),
-                "repository_id": repository_id,
-                "target_path": target_path,
-                "instruction": instruction,
-                "route": route,
-                "status": STATUS_QUEUED,
-                "action": ACTION_START,
-            },
-        )
+            """
+        params = {
+            "id": str(uuid.uuid4()),
+            "repository_id": repository_id,
+            "target_path": target_path,
+            "instruction": instruction,
+            "route": route,
+            "status": STATUS_QUEUED,
+            "action": ACTION_START,
+            "proposal_only": proposal_only,
+            "demo_usage_day": demo_usage_day,
+            "demo_reserved_tokens": demo_reserved_tokens,
+        }
+        if conn is None:
+            return self._one(sql, params)
+        row = conn.execute(sql, params).fetchone()
+        return _row_to_task(row) if row else None
 
     def get(self, task_id: str) -> Optional[AgentTask]:
         return self._one(f"SELECT {_COLUMNS} FROM agent_tasks WHERE id = %(id)s", {"id": task_id})
@@ -146,6 +180,7 @@ class AgentTaskStore:
                 updated_at = now()
             WHERE id = %(id)s
               AND status = %(awaiting)s
+              AND NOT proposal_only
               AND proposal_interrupt_id = %(interrupt_id)s
               AND proposal_diff_sha256 = %(diff_sha256)s
               AND approval_expires_at > now()
@@ -250,6 +285,43 @@ class AgentTaskStore:
                 "running": STATUS_RUNNING,
                 "final_response": final_response,
                 "sources": Jsonb(sources),
+                "execution_log": Jsonb(execution_log),
+                "outcome": Jsonb(outcome),
+            },
+        )
+
+    def mark_proposed(
+        self,
+        task_id: str,
+        *,
+        diff: str,
+        diff_sha256: str,
+        relative_path: Optional[str],
+        message: str,
+        execution_log: List[str],
+        outcome: Dict[str, Any],
+    ) -> Optional[AgentTask]:
+        """Ends a PROPOSAL-ONLY task at its proposal: terminal 'proposed'.
+        No interrupt id and no approval window are stored, so no decision can
+        ever match it (record_decision also refuses proposal-only tasks)."""
+        return self._one(
+            f"""
+            UPDATE agent_tasks SET status = %(proposed)s, proposal_interrupt_id = NULL,
+                proposal_diff = %(diff)s, proposal_diff_sha256 = %(diff_sha256)s,
+                proposal_relative_path = %(relative_path)s, proposal_message = %(message)s,
+                proposal_fix_iteration = 0, approval_expires_at = NULL, decision_approved = NULL,
+                execution_log = %(execution_log)s, outcome = %(outcome)s, finished_at = now(), updated_at = now()
+            WHERE id = %(id)s AND status = %(running)s AND proposal_only
+            RETURNING {_COLUMNS}
+            """,
+            {
+                "id": task_id,
+                "proposed": STATUS_PROPOSED,
+                "running": STATUS_RUNNING,
+                "diff": diff,
+                "diff_sha256": diff_sha256,
+                "relative_path": relative_path,
+                "message": message,
                 "execution_log": Jsonb(execution_log),
                 "outcome": Jsonb(outcome),
             },

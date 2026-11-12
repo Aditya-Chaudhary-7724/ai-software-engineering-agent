@@ -42,7 +42,10 @@ from agent.approval import hashes_match
 from agent.classification import classify_task
 from agent_tasks import models as task_models
 from agent_tasks.store import AgentTaskStore
+from demo.limits import DemoLimiter, DemoLimitError, client_key
 
+import config
+from api.auth import Principal, require_service_token
 from api.dependencies import get_database_url, require_repository_on_disk
 from api.errors import APIError
 from api.repository_catalog import RepositoryRecord
@@ -137,6 +140,8 @@ def _scrub(value: Optional[str], roots: List[str]) -> Optional[str]:
 
 
 def _proposal_state(task: task_models.AgentTask, now: datetime) -> str:
+    if task.proposal_only:
+        return "display_only"  # a public-demo proposal: never decidable
     expires = task.approval_expires_at
     if task.status == task_models.STATUS_AWAITING_APPROVAL:
         return "pending" if expires is not None and expires > now else "expired"
@@ -206,6 +211,7 @@ def to_api(task: task_models.AgentTask, now: Optional[datetime] = None) -> Agent
             test_skipped_reason=outcome.get("test_skipped_reason"),
         ),
         proposal=proposal,
+        proposal_only=task.proposal_only,
         approvals_granted=task.approvals_granted,
         decided_at=task.decided_at,
         created_at=task.created_at,
@@ -234,9 +240,39 @@ def preview_route(request: RoutePreviewRequest) -> AgentRoutePreview:
     )
 
 
+def _create_demo_task(database_url: str, http_request: Request, record: RepositoryRecord, instruction: str, route: str):
+    """A PROPOSAL-ONLY task for the public demo. The visitor/day limits, the
+    token reservation and the task row are written in ONE transaction: if
+    the task row is refused (the repository already has an active task) or
+    a limit is hit, nothing is recorded and nothing is charged."""
+    try:
+        key = client_key(http_request.headers.get("x-demo-client-ip", ""), config.demo_token_secret())
+    except ValueError:
+        raise APIError(400, "demo_client_ip_required")
+    limiter = DemoLimiter(database_url)
+    with psycopg.connect(database_url) as conn:
+        with conn.transaction():
+            try:
+                reservation = limiter.reserve_task(conn, key)
+            except DemoLimitError as exc:
+                raise APIError(
+                    429, exc.code, headers={"Retry-After": str(exc.retry_after_seconds)},
+                    details={"retry_after_seconds": exc.retry_after_seconds},
+                )
+            task = AgentTaskStore(database_url).create(
+                repository_id=record.id, target_path=record.root_path, instruction=instruction, route=route,
+                proposal_only=True, demo_usage_day=reservation.day, demo_reserved_tokens=reservation.tokens, conn=conn,
+            )
+            if task is None:
+                raise APIError(409, "agent_task_active")  # rolls the reservation back
+    return task
+
+
 @router.post("/repositories/{repository_id}/agent-tasks", response_model=AgentTask, status_code=202)
 def submit_task(
     request: TaskRequest,
+    http_request: Request,
+    principal: Principal = Depends(require_service_token),
     record: RepositoryRecord = Depends(require_repository_on_disk),
     database_url: str = Depends(get_database_url),
     worker=Depends(get_agent_worker),
@@ -245,11 +281,14 @@ def submit_task(
     route = classify_task(instruction)
     if route not in task_models.SUPPORTED_ROUTES:
         raise APIError(422, "route_not_supported")
-    task = _with_db_errors(
-        lambda: AgentTaskStore(database_url).create(
-            repository_id=record.id, target_path=record.root_path, instruction=instruction, route=route
+    if principal.is_demo:
+        task = _with_db_errors(lambda: _create_demo_task(database_url, http_request, record, instruction, route))
+    else:
+        task = _with_db_errors(
+            lambda: AgentTaskStore(database_url).create(
+                repository_id=record.id, target_path=record.root_path, instruction=instruction, route=route
+            )
         )
-    )
     if task is None:
         raise APIError(409, "agent_task_active")
     worker.notify()
@@ -267,9 +306,19 @@ def list_tasks(
 
 
 @router.get("/agent-tasks/{task_id}", response_model=AgentTask)
-def get_task(task_id: str, database_url: str = Depends(get_database_url)) -> AgentTask:
+def get_task(
+    task_id: str,
+    principal: Principal = Depends(require_service_token),
+    database_url: str = Depends(get_database_url),
+) -> AgentTask:
     canonical = _canonical_task_id(task_id)
     task = _with_db_errors(lambda: AgentTaskStore(database_url).get(canonical))
+    # The demo sees only demo (proposal-only) tasks on demo repositories;
+    # anything else looks nonexistent.
+    if task is not None and principal.is_demo and not (
+        task.proposal_only and task.repository_id in config.demo_repository_ids()
+    ):
+        task = None
     if task is None:
         raise APIError(404, "agent_task_not_found")
     return to_api(task)
@@ -305,6 +354,8 @@ def refusal_code(task: Optional[task_models.AgentTask], interrupt_id: str, diff_
     acceptance."""
     if task is None:
         return "agent_task_not_found"
+    if task.proposal_only:
+        return "demo_proposal_not_approvable"
     if task.status != task_models.STATUS_AWAITING_APPROVAL:
         return "approval_not_pending"
     if task.proposal_interrupt_id != interrupt_id:

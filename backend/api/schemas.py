@@ -317,6 +317,9 @@ class AgentTask(BaseModel):
     sources: List[AgentTaskSource]
     outcome: AgentTaskOutcome
     proposal: Optional[AgentTaskProposal]
+    # True for a public-demo task: it ends at its proposal, which can never
+    # be approved or applied.
+    proposal_only: bool = False
     approvals_granted: int
     decided_at: Optional[datetime]
     created_at: Optional[datetime]

@@ -55,9 +55,13 @@ def test_every_route_outside_the_allowlist_is_forbidden_to_the_demo(api_client, 
     assert seen_allowed == set(DEMO_ALLOWED_ROUTES)
 
 
-def test_the_allowlist_has_no_write_route_except_ask():
+def test_the_allowlist_has_no_write_route_except_ask_and_proposal_only_tasks():
     writes = {(m, t) for m, t in DEMO_ALLOWED_ROUTES if m != "GET"}
-    assert writes == {("POST", f"{API_V1_PREFIX}/repositories/{{repository_id}}/ask")}
+    assert writes == {
+        ("POST", f"{API_V1_PREFIX}/repositories/{{repository_id}}/ask"),
+        ("POST", f"{API_V1_PREFIX}/agent-tasks/route-preview"),  # pure classifier, no state
+        ("POST", f"{API_V1_PREFIX}/repositories/{{repository_id}}/agent-tasks"),  # proposal-only for the demo
+    }
 
 
 @pytest.mark.parametrize(
@@ -66,7 +70,6 @@ def test_the_allowlist_has_no_write_route_except_ask():
         ("POST", "/ingestion-jobs"),
         ("POST", "/repositories/1/reindex"),
         ("POST", "/agent-tasks/00000000-0000-0000-0000-000000000000/decision"),
-        ("POST", "/repositories/1/agent-tasks"),
         ("GET", "/agent-tasks"),
         ("GET", "/traces"),
         ("GET", "/ingestion-jobs"),

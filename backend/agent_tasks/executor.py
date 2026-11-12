@@ -36,7 +36,10 @@ from agent.checkpointing import (
     postgres_checkpointer,
     setup_postgres_checkpointer,
 )
+import config
 from agent.models import AgentRunResult
+from demo.limits import DemoLimiter, DemoLimits
+from demo.task_budget import BudgetedLLMProvider, DemoTaskTokenLimitError
 from agent.service import AgentService
 from graph.client import Neo4jClient
 from graph.exceptions import MissingCredentialsError as Neo4jMissingCredentialsError
@@ -81,6 +84,10 @@ class AgentTaskDependencies:
     approval_ttl_seconds: int = DEFAULT_APPROVAL_TTL_SECONDS
     embedding_provider_factory: Callable[[], Tuple[EmbeddingProvider, str]] = default_embedding_provider
     llm_provider_factory: Callable[[], Tuple[LLMProvider, str]] = configured_llm_provider
+    # Public-demo (proposal-only) tasks: the demo's own model, wrapped in a
+    # per-task token ceiling; their budget is settled by DemoLimiter.
+    demo_llm_provider_factory: Callable[[], Tuple[LLMProvider, str]] = lambda: configured_llm_provider("demo")
+    demo_limits_factory: Callable[[], DemoLimits] = DemoLimits.from_env
     neo4j_client_factory: Callable[[], Any] = Neo4jClient
     # Docker only when SANDBOX_ENABLED=true (backend/config.py); otherwise
     # a runner that executes nothing and reports "sandbox disabled".
@@ -96,12 +103,29 @@ class AgentTaskExecutor:
 
     def execute(self, task: AgentTask) -> None:
         """Runs one claimed task to its next resting state (awaiting
-        approval, or terminal). Never raises."""
+        approval, or terminal). Never raises.
+
+        A proposal-only (public demo) task runs under a per-task token
+        ceiling and, WHATEVER the outcome, has its budget reservation settled
+        to the tokens it really used, exactly once."""
+        budgeted: List[BudgetedLLMProvider] = []
+        try:
+            self._execute(task, budgeted)
+        finally:
+            if task.proposal_only:
+                self._settle_demo_task(task, budgeted[0].used if budgeted else 0)
+
+    def _execute(self, task: AgentTask, budgeted: List["BudgetedLLMProvider"]) -> None:
         try:
             if not Path(task.target_path).is_dir():
                 self._fail(task, "repository_files_unavailable")
                 return
-            with self._agent_service() as (service, generator):
+            if task.proposal_only and task.action == ACTION_RESUME:
+                # Unreachable through the API (no decision can match a
+                # proposal-only task); refused here too, defensively.
+                self._fail(task, "demo_proposal_not_approvable")
+                return
+            with self._agent_service(task, budgeted) as (service, generator):
                 if task.action == ACTION_RESUME:
                     result = self._resume(service, task)
                 else:
@@ -115,6 +139,11 @@ class AgentTaskExecutor:
         except UnsafeCheckpointDataError:
             logger.warning("agent task state refused by the checkpoint serializer", extra={"task_id": task.id})
             self._fail(task, "checkpoint_serialization_refused")
+        except DemoTaskTokenLimitError:
+            # Stopped BEFORE a call that could exceed the ceiling. No proposal
+            # is stored, so nothing partial is ever presented as complete.
+            logger.warning("demo agent task stopped at its token limit", extra={"task_id": task.id})
+            self._fail(task, "demo_task_token_limit_reached")
         except LLMQuotaExceededError:
             # Free-tier rate limit / quota. Nothing is retried automatically:
             # a retry would spend quota, and an approval is never re-run.
@@ -163,9 +192,20 @@ class AgentTaskExecutor:
         )
 
     @contextmanager
-    def _agent_service(self) -> Iterator[Tuple[AgentService, str]]:
+    def _agent_service(self, task: AgentTask, budgeted: List["BudgetedLLMProvider"]) -> Iterator[Tuple[AgentService, str]]:
         embedding_provider, _ = self._deps.embedding_provider_factory()
-        llm_provider, generator = self._deps.llm_provider_factory()
+        llm_provider: LLMProvider
+        if task.proposal_only:
+            inner, generator = self._deps.demo_llm_provider_factory()
+            wrapper = BudgetedLLMProvider(
+                inner,
+                ceiling=self._deps.demo_limits_factory().task_max_tokens,
+                max_completion_tokens=config.llm_max_completion_tokens(),
+            )
+            budgeted.append(wrapper)
+            llm_provider = wrapper
+        else:
+            llm_provider, generator = self._deps.llm_provider_factory()
         graph_client = self._open_graph()
         conn = connect_checkpoint_database(self._deps.database_url)
         try:
@@ -200,6 +240,21 @@ class AgentTaskExecutor:
         wrote_change = task.action == ACTION_RESUME and task.decision_approved is True and result.applied is True
         changes_applied = int(task.outcome.get("changes_applied") or 0) + (1 if wrote_change else 0)
         outcome = {**_outcome(result, generator), "changes_applied": changes_applied}
+        if result.status == "awaiting_approval" and task.proposal_only:
+            message = result.interrupt_message or {}
+            assert result.diff_sha256 is not None
+            self._store.mark_proposed(
+                task.id,
+                diff=message.get("diff") or "",
+                diff_sha256=result.diff_sha256,
+                relative_path=message.get("relative_path"),
+                message="Proposed by the public demo. Demo proposals are shown only: they can never be approved or applied.",
+                execution_log=list(result.execution_log),
+                outcome=outcome,
+            )
+            # Nothing can resume it: the paused graph state is discarded.
+            self._delete_checkpoint(task.id)
+            return
         if result.status == "awaiting_approval":
             message = result.interrupt_message or {}
             assert result.interrupt_id is not None and result.diff_sha256 is not None
@@ -226,6 +281,14 @@ class AgentTaskExecutor:
             outcome=outcome,
         )
         self._delete_checkpoint(task.id)
+
+    def _settle_demo_task(self, task: AgentTask, used_tokens: int) -> None:
+        try:
+            DemoLimiter(self._deps.database_url, self._deps.demo_limits_factory()).settle_task(task.id, used_tokens)
+        except Exception:
+            # The reservation then stays charged in full: conservative, never
+            # an undercount. Logged for the operator.
+            logger.exception("could not settle the demo task budget", extra={"task_id": task.id})
 
     def _fail(self, task: AgentTask, code: str) -> None:
         try:

@@ -33,6 +33,7 @@ from typing import Any, Optional
 import psycopg
 
 ACTION_ASK = "ask"
+ACTION_TASK = "task"
 _LOCK_KEY = "demo_limits"
 _EVENT_RETENTION = "2 days"
 
@@ -41,7 +42,12 @@ DEFAULTS = {
     "DEMO_ASK_GLOBAL_PER_MINUTE": 1,
     "DEMO_DAILY_TOKEN_BUDGET": 140_000,
     "DEMO_ASK_TOKEN_RESERVE": 5_000,
+    "DEMO_TASKS_PER_DAY": 5,
+    "DEMO_TASKS_PER_IP_PER_DAY": 2,
+    "DEMO_TASK_TOKEN_RESERVE": 8_000,
+    "DEMO_TASK_MAX_TOKENS": 12_000,
 }
+_UTC_DAY_START = "(date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')"
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,10 @@ class DemoLimits:
     ask_global_per_minute: int
     daily_token_budget: int
     ask_token_reserve: int
+    tasks_per_day: int = DEFAULTS["DEMO_TASKS_PER_DAY"]
+    tasks_per_ip_per_day: int = DEFAULTS["DEMO_TASKS_PER_IP_PER_DAY"]
+    task_token_reserve: int = DEFAULTS["DEMO_TASK_TOKEN_RESERVE"]
+    task_max_tokens: int = DEFAULTS["DEMO_TASK_MAX_TOKENS"]
 
     @classmethod
     def from_env(cls) -> "DemoLimits":
@@ -62,6 +72,10 @@ class DemoLimits:
             ask_global_per_minute=value("DEMO_ASK_GLOBAL_PER_MINUTE"),
             daily_token_budget=value("DEMO_DAILY_TOKEN_BUDGET"),
             ask_token_reserve=value("DEMO_ASK_TOKEN_RESERVE"),
+            tasks_per_day=value("DEMO_TASKS_PER_DAY"),
+            tasks_per_ip_per_day=value("DEMO_TASKS_PER_IP_PER_DAY"),
+            task_token_reserve=value("DEMO_TASK_TOKEN_RESERVE"),
+            task_max_tokens=value("DEMO_TASK_MAX_TOKENS"),
         )
 
 
@@ -96,6 +110,15 @@ def _one(conn: psycopg.Connection, sql: str, params: Any = None) -> tuple:
     return tuple(row)
 
 
+def _seconds_until_utc_midnight(conn: psycopg.Connection) -> int:
+    (seconds,) = _one(
+        conn,
+        "SELECT EXTRACT(EPOCH FROM (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day' "
+        "- (now() AT TIME ZONE 'UTC')))",
+    )
+    return int(seconds) + 1
+
+
 def client_key(raw_ip: str, secret: str) -> str:
     """HMAC of the client's network. Raises ValueError for anything that is
     not an IP address."""
@@ -122,26 +145,71 @@ class DemoLimiter:
                 conn.execute(f"DELETE FROM demo_rate_events WHERE created_at < now() - interval '{_EVENT_RETENTION}'")
                 self._check_window(conn, "1 hour", limits.ask_per_ip_per_hour, client_hash)
                 self._check_window(conn, "1 minute", limits.ask_global_per_minute, None)
-                day, used = _one(
-                    conn,
-                    "SELECT (now() AT TIME ZONE 'UTC')::date, "
-                    "COALESCE((SELECT tokens FROM demo_token_usage WHERE day = (now() AT TIME ZONE 'UTC')::date), 0)",
-                )
-                if used + limits.ask_token_reserve > limits.daily_token_budget:
-                    (seconds,) = _one(
-                        conn,
-                        "SELECT EXTRACT(EPOCH FROM (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day' "
-                        "- (now() AT TIME ZONE 'UTC')))",
-                    )
-                    raise DemoDailyLimitReachedError(int(seconds) + 1)
-                conn.execute("INSERT INTO demo_rate_events (action, client_hash) VALUES (%s, %s)", (ACTION_ASK, client_hash))
+                return self._admit(conn, ACTION_ASK, client_hash, limits.ask_token_reserve)
+
+    def reserve_task(self, conn: psycopg.Connection, client_hash: str) -> Reservation:
+        """Admits one demo agent task and reserves its tokens INSIDE the
+        caller's open transaction (not committed here), so the caller can
+        insert the task row in the same transaction: either all of it is
+        recorded, or none of it (e.g. when the task row is refused)."""
+        limits = self._limits
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_LOCK_KEY,))
+        self._check_since_utc_midnight(conn, ACTION_TASK, limits.tasks_per_ip_per_day, client_hash)
+        self._check_since_utc_midnight(conn, ACTION_TASK, limits.tasks_per_day, None)
+        return self._admit(conn, ACTION_TASK, client_hash, limits.task_token_reserve)
+
+    def settle_task(self, task_id: str, used_tokens: int) -> bool:
+        """Settles a demo task's reservation to its real total, EXACTLY ONCE
+        (whatever the outcome: proposed, failed, ceiling). Returns False if
+        there was nothing to settle (not a demo task, or already settled)."""
+        with psycopg.connect(self._database_url) as conn:
+            with conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_LOCK_KEY,))
+                row = conn.execute(
+                    "SELECT demo_usage_day, demo_reserved_tokens FROM agent_tasks "
+                    "WHERE id = %s AND proposal_only AND NOT demo_settled FOR UPDATE",
+                    (task_id,),
+                ).fetchone()
+                if row is None or row[0] is None:
+                    return False
+                day, reserved = row[0], int(row[1] or 0)
+                used = max(0, int(used_tokens))
                 conn.execute(
-                    "INSERT INTO demo_token_usage (day, tokens, requests) VALUES (%s, %s, 1) "
-                    "ON CONFLICT (day) DO UPDATE SET tokens = demo_token_usage.tokens + EXCLUDED.tokens, "
-                    "requests = demo_token_usage.requests + 1",
-                    (day, limits.ask_token_reserve),
+                    "UPDATE demo_token_usage SET tokens = GREATEST(0, tokens - %s + %s) WHERE day = %s",
+                    (reserved, used, day),
                 )
-        return Reservation(day=day, tokens=limits.ask_token_reserve)
+                conn.execute(
+                    "UPDATE agent_tasks SET demo_used_tokens = %s, demo_settled = TRUE WHERE id = %s", (used, task_id)
+                )
+        return True
+
+    def _admit(self, conn: psycopg.Connection, action: str, client_hash: str, reserve: int) -> Reservation:
+        """Budget check, then record the event and the reservation."""
+        day, used = _one(
+            conn,
+            "SELECT (now() AT TIME ZONE 'UTC')::date, "
+            "COALESCE((SELECT tokens FROM demo_token_usage WHERE day = (now() AT TIME ZONE 'UTC')::date), 0)",
+        )
+        if used + reserve > self._limits.daily_token_budget:
+            raise DemoDailyLimitReachedError(_seconds_until_utc_midnight(conn))
+        conn.execute("INSERT INTO demo_rate_events (action, client_hash) VALUES (%s, %s)", (action, client_hash))
+        conn.execute(
+            "INSERT INTO demo_token_usage (day, tokens, requests) VALUES (%s, %s, 1) "
+            "ON CONFLICT (day) DO UPDATE SET tokens = demo_token_usage.tokens + EXCLUDED.tokens, "
+            "requests = demo_token_usage.requests + 1",
+            (day, reserve),
+        )
+        return Reservation(day=day, tokens=reserve)
+
+    @staticmethod
+    def _check_since_utc_midnight(conn: psycopg.Connection, action: str, limit: int, client_hash: Optional[str]) -> None:
+        where, params = "action = %s AND created_at >= " + _UTC_DAY_START, [action]
+        if client_hash is not None:
+            where += " AND client_hash = %s"
+            params.append(client_hash)
+        (count,) = _one(conn, f"SELECT count(*) FROM demo_rate_events WHERE {where}", params)
+        if count >= limit:
+            raise DemoDailyLimitReachedError(_seconds_until_utc_midnight(conn))
 
     def settle(self, reservation: Reservation, actual_tokens: Optional[int]) -> None:
         """Replaces the reserve with the provider-reported usage. With no

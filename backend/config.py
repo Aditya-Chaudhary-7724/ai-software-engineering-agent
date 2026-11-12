@@ -230,6 +230,11 @@ def demo_repository_ids() -> frozenset:
     return frozenset(ids)
 
 
+def demo_token_secret() -> str:
+    """Key for hashing demo visitors' networks (never the raw IP)."""
+    return os.environ.get("DEMO_API_SERVICE_TOKEN", "")
+
+
 def demo_mode_enabled() -> bool:
     return bool(os.environ.get("DEMO_API_SERVICE_TOKEN"))
 
@@ -248,12 +253,18 @@ def demo_configuration_problems() -> List[str]:
         problems.append("DEMO_REPOSITORY_IDS must be a comma-separated list of repository ids")
     if not demo_repository_ids():
         problems.append("demo mode is enabled but DEMO_REPOSITORY_IDS lists no repository")
-    for name in ("DEMO_ASK_PER_IP_PER_HOUR", "DEMO_ASK_GLOBAL_PER_MINUTE", "DEMO_DAILY_TOKEN_BUDGET", "DEMO_ASK_TOKEN_RESERVE"):
+    for name in (
+        "DEMO_ASK_PER_IP_PER_HOUR", "DEMO_ASK_GLOBAL_PER_MINUTE", "DEMO_DAILY_TOKEN_BUDGET", "DEMO_ASK_TOKEN_RESERVE",
+        "DEMO_TASKS_PER_DAY", "DEMO_TASKS_PER_IP_PER_DAY", "DEMO_TASK_TOKEN_RESERVE", "DEMO_TASK_MAX_TOKENS",
+    ):
         if not _bounded_int(name, 1, 10_000_000):
             problems.append(f"{name} must be a positive integer")
     budget, reserve = os.environ.get("DEMO_DAILY_TOKEN_BUDGET", "").strip(), os.environ.get("DEMO_ASK_TOKEN_RESERVE", "").strip()
     if budget.isdigit() and reserve.isdigit() and int(reserve) > int(budget):
         problems.append("DEMO_ASK_TOKEN_RESERVE must not exceed DEMO_DAILY_TOKEN_BUDGET")
+    task_reserve, task_max = os.environ.get("DEMO_TASK_TOKEN_RESERVE", "").strip(), os.environ.get("DEMO_TASK_MAX_TOKENS", "").strip()
+    if task_reserve.isdigit() and task_max.isdigit() and int(task_reserve) > int(task_max):
+        problems.append("DEMO_TASK_TOKEN_RESERVE must not exceed DEMO_TASK_MAX_TOKENS")
     # On Groq, rate limits are per model: the demo gets its OWN model so its
     # traffic can never use up the operator's quota. Required, no fallback.
     if llm_provider_name() == "groq" and not os.environ.get("DEMO_LLM_MODEL", "").strip():

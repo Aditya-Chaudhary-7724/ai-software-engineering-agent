@@ -21,7 +21,6 @@ It is a POST only so the question travels in the body, not in URLs/logs.
 """
 
 import logging
-import os
 from typing import Any, List, Optional
 
 import psycopg
@@ -40,6 +39,7 @@ from rag.llm.factory import configured_llm_provider
 from vectorstore.store import VectorStore
 
 from api.dependencies import get_database_url, get_neo4j_client_factory, get_repository_record
+import config
 from api.auth import Principal, require_service_token
 from api.errors import APIError
 from api.repository_catalog import RepositoryRecord
@@ -89,7 +89,7 @@ def _reserve_demo_ask(limiter: DemoLimiter, http_request: Request) -> Reservatio
     it is reduced to an HMAC'd network and never stored raw."""
     raw_ip = http_request.headers.get("x-demo-client-ip", "")
     try:
-        key = client_key(raw_ip, os.environ["DEMO_API_SERVICE_TOKEN"])
+        key = client_key(raw_ip, config.demo_token_secret())
     except ValueError:
         raise APIError(400, "demo_client_ip_required")
     try:

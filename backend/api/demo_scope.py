@@ -25,9 +25,10 @@ from api.errors import APIError
 
 _V1 = "/api/v1"
 
-# (HTTP method, route template). Read-only routes plus Ask. Demo agent
-# tasks are NOT here yet: they will be added only together with the
-# propose-only mode that guarantees a demo task can never write.
+# (HTTP method, route template). Read-only routes, Ask, and PROPOSAL-ONLY
+# agent tasks: a demo task ends at its proposal (terminal 'proposed'), and
+# no decision can ever match it, so the demo can never write. Task reads are
+# further restricted in the route to the demo's own proposal-only tasks.
 DEMO_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset(
     {
         ("GET", f"{_V1}/capabilities"),
@@ -39,6 +40,9 @@ DEMO_ALLOWED_ROUTES: FrozenSet[Tuple[str, str]] = frozenset(
         ("GET", f"{_V1}/repositories/{{repository_id}}/graph/search"),
         ("GET", f"{_V1}/repositories/{{repository_id}}/graph/neighborhood"),
         ("POST", f"{_V1}/repositories/{{repository_id}}/ask"),
+        ("POST", f"{_V1}/agent-tasks/route-preview"),
+        ("POST", f"{_V1}/repositories/{{repository_id}}/agent-tasks"),
+        ("GET", f"{_V1}/agent-tasks/{{task_id}}"),
     }
 )
 

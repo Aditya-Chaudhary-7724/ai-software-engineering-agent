@@ -159,7 +159,8 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     instruction TEXT NOT NULL,
     route TEXT NOT NULL CHECK (route IN ('answer', 'modify')),
     status TEXT NOT NULL CHECK (status IN (
-        'queued', 'running', 'awaiting_approval', 'completed', 'rejected', 'failed', 'expired', 'interrupted'
+        'queued', 'running', 'awaiting_approval', 'completed', 'rejected', 'failed', 'expired', 'interrupted',
+        'proposed'
     )),
     -- What the worker does when it claims a queued task: start the graph, or
     -- resume it with the decision recorded below.
@@ -225,3 +226,42 @@ CREATE TABLE IF NOT EXISTS demo_token_usage (
     tokens BIGINT NOT NULL DEFAULT 0 CHECK (tokens >= 0),
     requests INTEGER NOT NULL DEFAULT 0 CHECK (requests >= 0)
 );
+
+-- 2026-11-12 (schema version 3): propose-only demo agent tasks.
+--
+-- A task created by the public demo principal has proposal_only = TRUE. It
+-- runs until a change is PROPOSED and then ends in the terminal status
+-- 'proposed': its LangGraph checkpoint is deleted and record_decision
+-- refuses proposal-only tasks, so a demo proposal can never be approved or
+-- applied, by anyone. The demo_* columns hold the task's token-budget
+-- reservation (taken at submission, in the same transaction as the task
+-- row) and whether it has been settled to the real usage (exactly once).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'agent_tasks' AND column_name = 'proposal_only'
+    ) THEN
+        ALTER TABLE agent_tasks
+            ADD COLUMN proposal_only BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN demo_usage_day DATE,
+            ADD COLUMN demo_reserved_tokens INTEGER,
+            ADD COLUMN demo_used_tokens INTEGER,
+            ADD COLUMN demo_settled BOOLEAN NOT NULL DEFAULT FALSE;
+    END IF;
+
+    -- Existing databases: widen the status CHECK to include 'proposed'
+    -- (drop and re-add; no row changes, every existing row still passes).
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'agent_tasks_status_check' AND conrelid = 'agent_tasks'::regclass
+          AND pg_get_constraintdef(oid) LIKE '%proposed%'
+    ) THEN
+        ALTER TABLE agent_tasks DROP CONSTRAINT IF EXISTS agent_tasks_status_check;
+        ALTER TABLE agent_tasks ADD CONSTRAINT agent_tasks_status_check CHECK (status IN (
+            'queued', 'running', 'awaiting_approval', 'completed', 'rejected', 'failed', 'expired', 'interrupted',
+            'proposed'
+        ));
+    END IF;
+END
+$$;

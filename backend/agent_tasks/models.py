@@ -12,12 +12,15 @@ Status lifecycle:
     awaiting_approval -> expired                    (approval window passed)
     running           -> interrupted                (worker heartbeat went stale)
     running (resume after a rejection) -> rejected
+    running (proposal_only task)       -> proposed  (public demo: the diff is shown,
+                                                     never approvable or applied)
 
-`completed` / `rejected` / `failed` / `expired` / `interrupted` are terminal.
+`completed` / `rejected` / `failed` / `expired` / `interrupted` / `proposed`
+are terminal.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 STATUS_QUEUED = "queued"
@@ -28,8 +31,11 @@ STATUS_REJECTED = "rejected"
 STATUS_FAILED = "failed"
 STATUS_EXPIRED = "expired"
 STATUS_INTERRUPTED = "interrupted"
+STATUS_PROPOSED = "proposed"
 ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_RUNNING, STATUS_AWAITING_APPROVAL)
-TERMINAL_STATUSES = (STATUS_COMPLETED, STATUS_REJECTED, STATUS_FAILED, STATUS_EXPIRED, STATUS_INTERRUPTED)
+TERMINAL_STATUSES = (
+    STATUS_COMPLETED, STATUS_REJECTED, STATUS_FAILED, STATUS_EXPIRED, STATUS_INTERRUPTED, STATUS_PROPOSED,
+)
 
 ACTION_START = "start"
 ACTION_RESUME = "resume"
@@ -74,3 +80,9 @@ class AgentTask:
     heartbeat_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # Public demo (schema version 3): proposal-only tasks and their budget.
+    proposal_only: bool = False
+    demo_usage_day: Optional[date] = None
+    demo_reserved_tokens: Optional[int] = None
+    demo_used_tokens: Optional[int] = None
+    demo_settled: bool = False
