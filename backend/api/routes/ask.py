@@ -38,6 +38,7 @@ from rag.llm.factory import configured_llm_provider
 from vectorstore.store import VectorStore
 
 from api.dependencies import get_database_url, get_neo4j_client_factory, get_repository_record
+from api.auth import Principal, require_service_token
 from api.errors import APIError
 from api.repository_catalog import RepositoryRecord
 from api.schemas import AskAnswer, AskResponse, AskRetrieval, AskSource
@@ -83,6 +84,7 @@ def _open_graph(client_factory, root_path: str):
 @router.post("/repositories/{repository_id}/ask", response_model=AskResponse)
 def ask(
     request: AskRequest,
+    principal: Principal = Depends(require_service_token),
     record: RepositoryRecord = Depends(get_repository_record),
     database_url: str = Depends(get_database_url),
     neo4j_client_factory=Depends(get_neo4j_client_factory),
@@ -97,7 +99,7 @@ def ask(
         logger.warning("ask refused: the embedding provider is misconfigured (see check_production_config.py)")
         raise APIError(503, "embedding_not_configured")
     try:
-        llm_provider, llm_name = configured_llm_provider()
+        llm_provider, llm_name = configured_llm_provider(principal.role)
     except LLMConfigurationError:
         logger.warning("ask refused: the LLM provider is misconfigured (see check_production_config.py)")
         raise APIError(503, "llm_not_configured")

@@ -104,3 +104,43 @@ def test_check_production_config_passes_a_complete_groq_setup():
     assert result.returncode == 0, result.stdout
     assert "LLM provider: groq" in result.stdout
     assert "GROQ_API_KEY" in result.stdout and FAKE_KEY not in result.stdout
+
+
+def _groq_env(monkeypatch, **extra):
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", FAKE_KEY)
+    monkeypatch.setenv("LLM_MODEL", "vendor/operator-model")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "low")
+    for key, value in extra.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_demo_requests_use_the_demo_model_and_effort(monkeypatch):
+    _groq_env(monkeypatch, DEMO_LLM_MODEL="vendor/demo-model", DEMO_LLM_REASONING_EFFORT="none")
+    demo, _ = configured_llm_provider("demo")
+    operator, _ = configured_llm_provider("operator")
+    assert (demo.model, demo._reasoning_effort) == ("vendor/demo-model", "none")
+    assert (operator.model, operator._reasoning_effort) == ("vendor/operator-model", "low")
+
+
+def test_demo_requests_never_fall_back_to_the_operator_model(monkeypatch):
+    _groq_env(monkeypatch)
+    with pytest.raises(LLMConfigurationError, match="DEMO_LLM_MODEL"):
+        configured_llm_provider("demo")
+    assert configured_llm_provider("operator")[0].model == "vendor/operator-model"
+
+
+def test_the_role_names_match_the_api_principals():
+    from api.auth import ROLE_DEMO, ROLE_OPERATOR
+    from rag.llm import factory
+
+    assert (factory.ROLE_OPERATOR, factory.ROLE_DEMO) == (ROLE_OPERATOR, ROLE_DEMO)
+
+
+@pytest.mark.parametrize(
+    "demo_model, expected",
+    [("", "requires DEMO_LLM_MODEL"), ("vendor/operator-model", "must differ from LLM_MODEL")],
+)
+def test_demo_mode_on_groq_needs_its_own_model(monkeypatch, demo_model, expected):
+    _groq_env(monkeypatch, DEMO_API_SERVICE_TOKEN="d" * 40, DEMO_REPOSITORY_IDS="1", DEMO_LLM_MODEL=demo_model)
+    assert any(expected in p for p in config.demo_configuration_problems())

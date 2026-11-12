@@ -153,3 +153,32 @@ def test_check_production_config_reports_demo_mode():
     bad = _check_script({"DEMO_API_SERVICE_TOKEN": TEST_SERVICE_TOKEN, "DEMO_REPOSITORY_IDS": "3"})
     assert bad.returncode == 1 and "must differ from API_SERVICE_TOKEN" in bad.stdout
     assert DEMO_TOKEN not in ok.stdout and TEST_SERVICE_TOKEN not in bad.stdout
+
+
+@requires_postgres
+def test_demo_asks_are_answered_by_the_demo_model(api_client, monkeypatch, vector_store, tmp_path):  # noqa: F811
+    from rag.llm.openai_compatible_provider import OpenAICompatibleLLMProvider
+    from tests.vectorstore.conftest import TEST_DATABASE_URL
+    from vectorstore.embeddings.local_provider import DeterministicLocalEmbeddingProvider
+    from vectorstore.service import IndexingService
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "calc.py").write_text("def add_numbers(a, b):\n    return a + b\n")
+    repository_id = IndexingService(DeterministicLocalEmbeddingProvider(), vector_store).index_repository(str(root)).repository_id
+    for key, value in {
+        "DATABASE_URL": TEST_DATABASE_URL, "LLM_PROVIDER": "groq", "GROQ_API_KEY": "gsk_" + "f" * 40,
+        "LLM_MODEL": "vendor/operator-model", "DEMO_LLM_MODEL": "vendor/demo-model",
+        "DEMO_API_SERVICE_TOKEN": DEMO_TOKEN, "DEMO_REPOSITORY_IDS": str(repository_id),
+    }.items():
+        monkeypatch.setenv(key, value)
+    used = []
+    monkeypatch.setattr(OpenAICompatibleLLMProvider, "generate", lambda self, prompt, system=None: used.append(self.model) or "ok")
+
+    for headers in (demo_headers(), auth_headers()):
+        response = api_client.post(
+            f"{API_V1_PREFIX}/repositories/{repository_id}/ask", headers={**headers, "X-Demo-Client-IP": "203.0.113.7"},
+            json={"question": "add_numbers"},
+        )
+        assert response.status_code == 200, response.text
+    assert used == ["vendor/demo-model", "vendor/operator-model"]

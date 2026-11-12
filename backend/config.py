@@ -248,6 +248,12 @@ def demo_configuration_problems() -> List[str]:
         problems.append("DEMO_REPOSITORY_IDS must be a comma-separated list of repository ids")
     if not demo_repository_ids():
         problems.append("demo mode is enabled but DEMO_REPOSITORY_IDS lists no repository")
+    # On Groq, rate limits are per model: the demo gets its OWN model so its
+    # traffic can never use up the operator's quota. Required, no fallback.
+    if llm_provider_name() == "groq" and not os.environ.get("DEMO_LLM_MODEL", "").strip():
+        problems.append("demo mode with LLM_PROVIDER=groq requires DEMO_LLM_MODEL (a different model from LLM_MODEL)")
+    elif llm_provider_name() == "groq" and os.environ["DEMO_LLM_MODEL"].strip() == os.environ.get("LLM_MODEL", "").strip():
+        problems.append("DEMO_LLM_MODEL must differ from LLM_MODEL (Groq limits are per model)")
     return problems
 
 

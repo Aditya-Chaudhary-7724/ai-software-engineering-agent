@@ -18,7 +18,14 @@ from rag.llm.exceptions import LLMConfigurationError
 from rag.llm.stub_provider import StubLLMProvider
 
 
-def configured_llm_provider() -> Tuple[LLMProvider, str]:
+ROLE_OPERATOR = "operator"
+ROLE_DEMO = "demo"
+
+
+def configured_llm_provider(role: str = ROLE_OPERATOR) -> Tuple[LLMProvider, str]:
+    """`role="demo"` (the public demo principal) uses DEMO_LLM_MODEL and
+    DEMO_LLM_REASONING_EFFORT on Groq, so demo traffic draws on a different
+    per-model quota than the operator's. Other providers are role-agnostic."""
     problems = config.llm_configuration_problems()
     if problems:
         raise LLMConfigurationError("; ".join(problems))
@@ -34,10 +41,20 @@ def configured_llm_provider() -> Tuple[LLMProvider, str]:
             OpenAICompatibleLLMProvider(
                 api_key=os.environ["GROQ_API_KEY"],
                 base_url=config.GROQ_BASE_URL,
-                model=os.environ["LLM_MODEL"].strip(),
+                model=_groq_setting("LLM_MODEL", role).strip(),
                 max_completion_tokens=config.llm_max_completion_tokens(),
-                reasoning_effort=os.environ.get("LLM_REASONING_EFFORT", "").strip() or None,
+                reasoning_effort=_groq_setting("LLM_REASONING_EFFORT", role).strip() or None,
             ),
             "groq",
         )
     return StubLLMProvider(), "stub"
+
+
+def _groq_setting(name: str, role: str) -> str:
+    if role == ROLE_DEMO:
+        value = os.environ.get(f"DEMO_{name}", "")
+        if name == "LLM_MODEL" and not value.strip():
+            # Never silently fall back to the operator's model (and quota).
+            raise LLMConfigurationError("demo requests require DEMO_LLM_MODEL")
+        return value
+    return os.environ.get(name, "")
