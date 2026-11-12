@@ -26,7 +26,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import check_environment, feature_flags, llm_configuration_problems, llm_provider_name, missing_required_settings
+from config import (
+    check_environment,
+    embedding_configuration_problems,
+    embedding_provider_name,
+    feature_flags,
+    llm_configuration_problems,
+    llm_provider_name,
+    missing_required_settings,
+)
 
 
 def main() -> None:
@@ -58,14 +66,18 @@ def main() -> None:
     print(f"LLM provider: {llm_provider_name()}")
     for problem in llm_problems:
         print(f"  PROBLEM: {problem}")
+    embedding_problems = embedding_configuration_problems()
+    print(f"Embedding provider: {embedding_provider_name()}")
+    for problem in embedding_problems:
+        print(f"  PROBLEM: {problem}")
 
     missing = missing_required_settings()
     print()
     if missing:
         print(f"FAILED: {len(missing)} required setting(s) missing: {', '.join(missing)}")
         sys.exit(1)
-    if llm_problems:
-        print(f"FAILED: {len(llm_problems)} LLM configuration problem(s).")
+    if llm_problems or embedding_problems:
+        print(f"FAILED: {len(llm_problems) + len(embedding_problems)} provider configuration problem(s).")
         sys.exit(1)
 
     print("OK: all required settings are configured.")

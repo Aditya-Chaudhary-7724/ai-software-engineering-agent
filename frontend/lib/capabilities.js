@@ -19,3 +19,11 @@ export function llmCapability(c) {
   if (c.llm_provider === 'stub' || (!c.llm_provider && !c.llm_provider_configured)) return ['warn', 'stub (placeholder output)'];
   return ['ok', c.llm_provider ?? 'provider configured'];
 }
+
+/** Embeddings entry for the capability strip: [tone, detail]. */
+export function embeddingCapability(c) {
+  if (c.embedding_provider === 'misconfigured') return ['err', 'misconfigured (see check_production_config.py)'];
+  if (c.embedding_provider === 'fastembed') return ['ok', 'local model (fastembed)'];
+  if (c.embedding_provider === 'deterministic_local' || !c.embedding_provider_configured) return ['warn', 'hash stand-in, non-semantic'];
+  return ['ok', c.embedding_provider ?? 'provider configured'];
+}

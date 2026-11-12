@@ -308,3 +308,10 @@ def test_a_misconfigured_provider_is_a_503_and_never_falls_back_to_the_stub(api_
 
     assert (response.status_code, response.json()) == (503, {"error": "llm_not_configured"})
     assert _db_snapshot() == before
+
+
+def test_a_misconfigured_embedding_provider_is_a_503(api_client, indexed_repo, monkeypatch):
+    repository_id, _ = indexed_repo
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "openai")  # no EMBEDDING_API_KEY
+    response = _ask(api_client, repository_id, {"question": "add_numbers"})
+    assert (response.status_code, response.json()) == (503, {"error": "embedding_not_configured"})

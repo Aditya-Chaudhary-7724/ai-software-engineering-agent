@@ -28,6 +28,9 @@ class Capabilities(BaseModel):
     # "anthropic" | "groq" | "stub" | "misconfigured" — a name, never a key.
     llm_provider: str
     llm_provider_configured: bool
+    # "openai" | "fastembed" | "deterministic_local" | "misconfigured".
+    embedding_provider: str
+    # True only for a SEMANTIC provider (not the hash stand-in).
     embedding_provider_configured: bool
     github_token_configured: bool
     # SANDBOX_ENABLED (backend/config.py). When false, Docker is not even

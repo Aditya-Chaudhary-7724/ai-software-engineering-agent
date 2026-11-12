@@ -46,6 +46,7 @@ from observability.tracer import Tracer
 from rag.llm.base import LLMProvider
 from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
 from rag.llm.factory import configured_llm_provider
+from vectorstore.exceptions import EmbeddingConfigurationError
 from sandbox.base import TestRunner
 from sandbox.disabled_runner import configured_test_runner
 from vectorstore.embeddings.base import EmbeddingProvider
@@ -122,6 +123,9 @@ class AgentTaskExecutor:
         except LLMConfigurationError:
             logger.warning("agent task refused: the LLM provider is misconfigured", extra={"task_id": task.id})
             self._fail(task, "llm_not_configured")
+        except EmbeddingConfigurationError:
+            logger.warning("agent task refused: the embedding provider is misconfigured", extra={"task_id": task.id})
+            self._fail(task, "embedding_not_configured")
         except psycopg.OperationalError:
             logger.warning("agent task lost the database", extra={"task_id": task.id})
             self._fail(task, "database_unavailable")

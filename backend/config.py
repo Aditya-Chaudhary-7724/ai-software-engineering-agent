@@ -127,6 +127,87 @@ def llm_configuration_problems() -> List[str]:
     return problems
 
 
+# --- Embedding provider selection -------------------------------------------
+#
+# EMBEDDING_PROVIDER: "openai", "fastembed" or "deterministic_local". Unset
+# keeps the original behaviour: OpenAI when EMBEDDING_API_KEY is set,
+# otherwise the deterministic, NON-semantic hash stand-in. Invalid settings
+# are configuration problems (reported, then refused), as for the LLM.
+#
+# fastembed runs an open-source model locally (ONNX Runtime, no PyTorch, no
+# API calls). Only models listed here are allowed: each has a KNOWN vector
+# dimension (the database stores vectors per dimension) and a PINNED
+# Hugging Face revision, so the weights cannot change underneath an index.
+EMBEDDING_PROVIDERS = ("openai", "fastembed", "deterministic_local")
+
+
+@dataclass(frozen=True)
+class LocalEmbeddingModel:
+    name: str  # the model name fastembed knows it by
+    dimension: int
+    hf_repo: str  # where fastembed's ONNX export of it lives
+    hf_revision: str  # exact commit of that repo
+
+
+FASTEMBED_MODELS = {
+    model.name: model
+    for model in (
+        LocalEmbeddingModel(
+            name="BAAI/bge-small-en-v1.5",
+            dimension=384,
+            hf_repo="Qdrant/bge-small-en-v1.5-onnx-Q",
+            hf_revision="aa8f8b060edb00e03bfdd08813a2949946c8ba55",
+        ),
+    )
+}
+DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
+# Batch size bounds peak memory: measured on linux/arm64 for bge-small,
+# batch 32 peaked at 1346 MiB, batch 8 at 524 MiB, at about the same speed.
+DEFAULT_EMBEDDING_BATCH_SIZE = 8
+MAX_EMBEDDING_BATCH_SIZE = 64
+
+
+def embedding_provider_name() -> str:
+    explicit = os.environ.get("EMBEDDING_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+    return "openai" if os.environ.get("EMBEDDING_API_KEY") else "deterministic_local"
+
+
+def fastembed_model() -> str:
+    return os.environ.get("EMBEDDING_MODEL", "").strip() or DEFAULT_FASTEMBED_MODEL
+
+
+def _bounded_int(name: str, low: int, high: int) -> bool:
+    raw = os.environ.get(name, "").strip()
+    return not raw or (raw.isdigit() and low <= int(raw) <= high)
+
+
+def embedding_batch_size() -> int:
+    raw = os.environ.get("EMBEDDING_BATCH_SIZE", "").strip()
+    return int(raw) if raw else DEFAULT_EMBEDDING_BATCH_SIZE
+
+
+def embedding_configuration_problems() -> List[str]:
+    name = embedding_provider_name()
+    if name not in EMBEDDING_PROVIDERS:
+        return [f"EMBEDDING_PROVIDER must be one of {', '.join(EMBEDDING_PROVIDERS)}"]
+    problems: List[str] = []
+    if name == "openai" and not os.environ.get("EMBEDDING_API_KEY"):
+        problems.append("EMBEDDING_PROVIDER=openai requires EMBEDDING_API_KEY")
+    if name == "fastembed":
+        if fastembed_model() not in FASTEMBED_MODELS:
+            problems.append(f"EMBEDDING_MODEL must be one of {', '.join(sorted(FASTEMBED_MODELS))} for fastembed")
+        if not _bounded_int("EMBEDDING_BATCH_SIZE", 1, MAX_EMBEDDING_BATCH_SIZE):
+            problems.append(f"EMBEDDING_BATCH_SIZE must be an integer from 1 to {MAX_EMBEDDING_BATCH_SIZE}")
+        if not _bounded_int("EMBEDDING_THREADS", 1, 64):
+            problems.append("EMBEDDING_THREADS must be an integer from 1 to 64")
+        model_path = os.environ.get("EMBEDDING_MODEL_PATH", "").strip()
+        if model_path and not os.path.isabs(model_path):
+            problems.append("EMBEDDING_MODEL_PATH must be an absolute path")
+    return problems
+
+
 # Feature flags: NOT secrets, so (unlike the settings above) their
 # effective value may be reported. Each is fail-closed: only the exact
 # value "true" (case-insensitive) turns the feature on.

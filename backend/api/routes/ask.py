@@ -33,6 +33,7 @@ from graph.queries import repository_exists
 from hybrid.service import HybridRAGService
 from jobs.ingestion import default_embedding_provider
 from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
+from vectorstore.exceptions import EmbeddingConfigurationError
 from rag.llm.factory import configured_llm_provider
 from vectorstore.store import VectorStore
 
@@ -112,7 +113,11 @@ def ask(
     if not question:
         raise APIError(422, "invalid_question")
 
-    embedding_provider, embedding_name = default_embedding_provider()
+    try:
+        embedding_provider, embedding_name = default_embedding_provider()
+    except EmbeddingConfigurationError:
+        logger.warning("ask refused: the embedding provider is misconfigured (see check_production_config.py)")
+        raise APIError(503, "embedding_not_configured")
     try:
         llm_provider, llm_name = configured_llm_provider()
     except LLMConfigurationError:

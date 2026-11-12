@@ -119,3 +119,15 @@ def test_capabilities_name_the_llm_provider_and_flag_a_misconfiguration(api_clie
     response = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers())
     assert (response.json()["llm_provider"], response.json()["llm_provider_configured"]) == ("groq", True)
     assert _FAKE_SECRET not in response.text
+
+
+def test_capabilities_name_the_embedding_provider(api_client, monkeypatch):
+    monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert (body["embedding_provider"], body["embedding_provider_configured"]) == ("deterministic_local", False)
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fastembed")
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert (body["embedding_provider"], body["embedding_provider_configured"]) == ("fastembed", True)
+    monkeypatch.setenv("EMBEDDING_MODEL", "not/allowlisted")
+    body = api_client.get(f"{API_V1_PREFIX}/capabilities", headers=auth_headers()).json()
+    assert body["embedding_provider"] == "misconfigured"

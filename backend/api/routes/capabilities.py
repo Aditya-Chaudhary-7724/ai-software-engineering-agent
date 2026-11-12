@@ -56,6 +56,9 @@ def get_capabilities(request: Request) -> Capabilities:
     # The provider that will actually answer: "misconfigured" when
     # LLM_PROVIDER is set but invalid (requests then fail with 503).
     llm_name = "misconfigured" if config.llm_configuration_problems() else config.llm_provider_name()
+    embedding_name = (
+        "misconfigured" if config.embedding_configuration_problems() else config.embedding_provider_name()
+    )
     sandbox_on = config.sandbox_enabled()
     # Disabled means disabled: don't shell out to Docker at all.
     docker_ok = sandbox_on and docker_available()
@@ -65,7 +68,8 @@ def get_capabilities(request: Request) -> Capabilities:
         graph=DependencyCapability(ok=readiness["neo4j"].ok, detail=readiness["neo4j"].detail),
         llm_provider=llm_name,
         llm_provider_configured=llm_name not in ("stub", "misconfigured"),
-        embedding_provider_configured=bool(os.environ.get("EMBEDDING_API_KEY")),
+        embedding_provider=embedding_name,
+        embedding_provider_configured=embedding_name not in ("deterministic_local", "misconfigured"),
         github_token_configured=bool(os.environ.get("GITHUB_TOKEN")),
         sandbox_enabled=sandbox_on,
         sandbox_docker_available=docker_ok,

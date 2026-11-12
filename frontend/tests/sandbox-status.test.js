@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { testOutcome } from '@/lib/agent-tasks';
-import { llmCapability, sandboxCapability } from '@/lib/capabilities';
+import { embeddingCapability, llmCapability, sandboxCapability } from '@/lib/capabilities';
 
 describe('testOutcome', () => {
   it('reports a disabled sandbox as not run, never as passed', () => {
@@ -58,5 +58,14 @@ describe('llmCapability', () => {
     expect(llmCapability({ llm_provider: 'stub', llm_provider_configured: false })).toEqual(['warn', 'stub (placeholder output)']);
     expect(llmCapability({ llm_provider_configured: false })).toEqual(['warn', 'stub (placeholder output)']);
     expect(llmCapability({ llm_provider_configured: true })).toEqual(['ok', 'provider configured']);
+  });
+});
+
+describe('embeddingCapability', () => {
+  it('distinguishes the local model, the hash stand-in and a misconfiguration', () => {
+    expect(embeddingCapability({ embedding_provider: 'fastembed', embedding_provider_configured: true })).toEqual(['ok', 'local model (fastembed)']);
+    expect(embeddingCapability({ embedding_provider: 'deterministic_local', embedding_provider_configured: false })[0]).toBe('warn');
+    expect(embeddingCapability({ embedding_provider: 'misconfigured', embedding_provider_configured: false })[0]).toBe('err');
+    expect(embeddingCapability({ embedding_provider_configured: true })).toEqual(['ok', 'provider configured']);
   });
 });

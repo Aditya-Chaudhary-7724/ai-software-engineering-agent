@@ -76,7 +76,12 @@ def pytest_sessionstart(session):
 # (exported before running pytest) may set them; a test run must never spend
 # free-tier quota or credits by accident. Tests that need a provider set these
 # explicitly with monkeypatch and fake the network client.
-_REAL_LLM_SELECTORS = ("LLM_PROVIDER", "GROQ_API_KEY", "LLM_MODEL", "LLM_REASONING_EFFORT", "LLM_MAX_COMPLETION_TOKENS")
+_REAL_LLM_SELECTORS = (
+    "LLM_PROVIDER", "GROQ_API_KEY", "LLM_MODEL", "LLM_REASONING_EFFORT", "LLM_MAX_COMPLETION_TOKENS",
+    # Embedding selection too: a .env choosing fastembed must not make the
+    # whole suite load (or download) a real model.
+    "EMBEDDING_PROVIDER", "EMBEDDING_MODEL", "EMBEDDING_MODEL_PATH", "EMBEDDING_BATCH_SIZE", "EMBEDDING_THREADS",
+)
 
 
 @pytest.fixture(autouse=True)

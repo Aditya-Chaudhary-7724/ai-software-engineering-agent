@@ -203,3 +203,18 @@ def test_unexpected_errors_become_internal_error(job_store, workspace):
 
     final = run_one(job_store, make_executor(job_store, workspace, github=Crashing()))
     assert final.status == "failed" and final.error_code == "internal_error"
+
+
+def test_a_misconfigured_embedding_provider_fails_the_job_cleanly(job_store, workspace, monkeypatch):
+    from vectorstore.embeddings.factory import configured_embedding_provider
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fastembed")
+    monkeypatch.setenv("EMBEDDING_MODEL", "not/allowlisted")
+    queue_ingest(job_store, workspace)
+    executor = make_executor(job_store, workspace)
+    executor._deps.embedding_provider_factory = configured_embedding_provider
+
+    final = run_one(job_store, executor)
+
+    assert (final.status, final.error_code) == ("failed", "embedding_not_configured")
+    assert final.repository_id is None
