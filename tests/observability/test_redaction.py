@@ -7,7 +7,9 @@ a substring of "keyword" — verified directly against a real trace
 produced by `manual_agent_demo.py` before being fixed here.
 """
 
-from observability.redaction import REDACTED_MARKER, redact_text, sanitize_metadata
+import pytest
+
+from observability.redaction import REDACTED_MARKER, redact_secrets, redact_text, sanitize_metadata
 
 
 def test_redacts_common_credential_key_names():
@@ -123,3 +125,49 @@ def test_redacts_groq_key_shaped_value_under_an_innocuous_key():
     result = sanitize_metadata({"message": "groq call failed with gsk_abcdefghijklmnopqrstuvwxyz0123"})
     assert "gsk_" not in result["message"]
     assert REDACTED_MARKER in result["message"]
+
+
+# -- sk- key shapes (regression: sk-ant-api03-... keys were NOT redacted) -------
+# Synthetic values only; none is a real key.
+_ANTHROPIC_STYLE = "sk-ant-api03-Q2xhdWRlRmFrZUtleUZvclRlc3RzT25seQ_aB-cD9eF0gH1iJ2kL3mN4oP5qR6sT7uV8wX9yZ0-AbCdEfAA"
+_OPENAI_PROJECT_STYLE = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_abcDEF-ghiJKL"
+_PLAIN_STYLE = "sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+_GROQ_STYLE = "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+
+
+@pytest.mark.parametrize("secret", [_ANTHROPIC_STYLE, _OPENAI_PROJECT_STYLE, _PLAIN_STYLE, _GROQ_STYLE])
+def test_api_key_shapes_are_fully_redacted(secret):
+    text = f"provider call failed using {secret} (status 401)"
+    redacted = redact_text(text)
+    assert REDACTED_MARKER in redacted
+    # No fragment of the key's random part survives, not even its tail.
+    assert secret not in redacted and secret[-12:] not in redacted and secret[12:30] not in redacted
+    assert redacted.startswith("provider call failed using ") and redacted.endswith(" (status 401)")
+
+
+def test_an_anthropic_key_under_an_innocuous_metadata_key_is_redacted():
+    result = sanitize_metadata({"note": f"retrying with {_ANTHROPIC_STYLE}"})
+    assert "sk-ant" not in result["note"] and REDACTED_MARKER in result["note"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "install sk-learn-is-a-python-library-for-machine-learning first",
+        "the task-runner-with-many-hyphenated-words-in-its-name failed",
+        "disk-usageandcapacitymonitoringservice is healthy",
+        "see the sk- prefix and sk-short in the docs",
+        "risk-assessment-and-mitigation-planning-for-q3",
+    ],
+)
+def test_ordinary_text_containing_sk_dash_is_not_over_redacted(text):
+    assert redact_text(text) == text
+
+
+def test_redaction_stays_fast_on_long_hyphenated_input():
+    import time
+
+    adversarial = "sk-" + "a-" * 20_000 + "!"
+    start = time.monotonic()
+    redact_secrets(adversarial)
+    assert time.monotonic() - start < 1.0
