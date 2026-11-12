@@ -11,7 +11,7 @@ from ingestion.service import IngestionService
 from parsing.service import ParsingService
 from vectorstore.chunking import build_chunks
 from vectorstore.embeddings.base import EmbeddingProvider
-from vectorstore.migrations import apply_schema
+from vectorstore.migrations import require_current_schema
 from vectorstore.store import VectorStore, embedding_column
 
 
@@ -31,14 +31,16 @@ class IndexingService:
         parsing_result = ParsingService().parse_repository(repository_path, ingestion_result)
         chunks = build_chunks(repository_path, ingestion_result, parsing_result)
 
-        # Fail fast, before spending time embedding, if this provider's
-        # vectors have no column to go into.
+        # Fail fast, before spending time embedding: the provider's vectors
+        # must have a column, and the schema must be current. Indexing never
+        # applies the schema itself (it used to, on every run): schema
+        # changes only reach a database via backend/scripts/apply_schema.py.
         embedding_column(self._embedding_provider.dimension)
+        self._require_current_schema()
         embeddings = self._embedding_provider.embed([c.content for c in chunks]) if chunks else []
 
         conn = self._vector_store.connect()
         try:
-            apply_schema(conn)  # commits on its own; no transaction is open afterwards
             # One transaction: upsert the repository row, delete ONLY that
             # repository's existing chunks, insert the new ones. Readers see
             # either the complete old index or the complete new one; any
@@ -62,3 +64,10 @@ class IndexingService:
             conn.close()
 
         return IndexingResult(repository_id=repository_id, chunks_indexed=len(chunks))
+
+    def _require_current_schema(self) -> None:
+        conn = self._vector_store.connect(register_vector_type=False)
+        try:
+            require_current_schema(conn)
+        finally:
+            conn.close()

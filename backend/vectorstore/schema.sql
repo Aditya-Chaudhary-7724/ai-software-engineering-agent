@@ -192,3 +192,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_agent_tasks_one_active_per_repository
     ON agent_tasks (repository_id) WHERE status IN ('queued', 'running', 'awaiting_approval');
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_created_at ON agent_tasks (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_repository_id ON agent_tasks (repository_id);
+
+-- 2026-11-12: schema version. One row; written by
+-- vectorstore.migrations.apply_schema (the version number lives in Python,
+-- SCHEMA_VERSION, so it has one source). Indexing CHECKS it instead of
+-- applying the schema itself, so a schema change only reaches a database
+-- through the explicit `backend/scripts/apply_schema.py` step.
+CREATE TABLE IF NOT EXISTS schema_version (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    version INTEGER NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

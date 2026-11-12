@@ -33,6 +33,19 @@ class ReindexRequiredError(VectorStoreError):
         self.active = active
 
 
+class SchemaOutOfDateError(VectorStoreError):
+    """The database schema is older than this code expects (or was never
+    applied). Code never applies it implicitly: run the explicit step."""
+
+    def __init__(self, found: Optional[int], expected: int) -> None:
+        state = "never applied" if found is None else f"version {found}"
+        super().__init__(
+            f"schema out of date ({state}, expected version {expected}): run backend/scripts/apply_schema.py"
+        )
+        self.found = found
+        self.expected = expected
+
+
 class EmbeddingDimensionError(VectorStoreError):
     """A provider produced vectors of a different dimension than it declared.
     Raised instead of storing or searching with them."""

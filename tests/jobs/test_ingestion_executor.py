@@ -218,3 +218,19 @@ def test_a_misconfigured_embedding_provider_fails_the_job_cleanly(job_store, wor
 
     assert (final.status, final.error_code) == ("failed", "embedding_not_configured")
     assert final.repository_id is None
+
+
+def test_an_out_of_date_schema_fails_the_job_and_leaves_no_checkout(job_store, workspace, monkeypatch):
+    import vectorstore.service
+    from vectorstore.exceptions import SchemaOutOfDateError
+
+    def out_of_date(self):
+        raise SchemaOutOfDateError(0, 1)
+
+    monkeypatch.setattr(vectorstore.service.IndexingService, "_require_current_schema", out_of_date)
+    _, destination = queue_ingest(job_store, workspace)
+
+    final = run_one(job_store, make_executor(job_store, workspace))
+
+    assert (final.status, final.error_code) == ("failed", "schema_out_of_date")
+    assert final.repository_id is None and not destination.exists()

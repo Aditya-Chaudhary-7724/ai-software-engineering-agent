@@ -48,7 +48,7 @@ from ingestion.service import IngestionService
 from parsing.service import ParsingService
 from vectorstore.embeddings.base import EmbeddingProvider
 from vectorstore.embeddings.factory import configured_embedding_provider
-from vectorstore.exceptions import EmbeddingConfigurationError
+from vectorstore.exceptions import EmbeddingConfigurationError, SchemaOutOfDateError
 from vectorstore.service import IndexingService
 from vectorstore.store import VectorStore
 
@@ -238,6 +238,11 @@ class IngestionExecutor:
             result = IndexingService(embedding_provider, VectorStore(self._deps.database_url)).index_repository(str(root))
         except psycopg.OperationalError:
             raise JobFailure("database_unavailable")
+        except SchemaOutOfDateError:
+            # Indexing never applies the schema itself; the operator must run
+            # backend/scripts/apply_schema.py.
+            logger.warning("job refused: database schema out of date (run apply_schema.py)", extra={"job_id": job.id})
+            raise JobFailure("schema_out_of_date")
         except Exception:
             logger.exception("indexing failed", extra={"job_id": job.id})
             raise JobFailure("indexing_failed")

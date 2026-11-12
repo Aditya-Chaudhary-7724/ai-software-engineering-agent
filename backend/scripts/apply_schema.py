@@ -15,6 +15,10 @@ happens to need it. This script is that explicit step. It does nothing
 destructive; running it twice, or against a database that already has
 the schema, is always safe.
 
+Since 2026-11-12 it is the ONLY way the schema reaches a database:
+indexing no longer applies it, it checks the recorded `schema_version`
+and refuses an out-of-date database. Run it before starting a new image.
+
 Run from the repository root, against a real `DATABASE_URL`:
 
     set -a; source .env; set +a

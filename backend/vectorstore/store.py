@@ -28,9 +28,13 @@ class VectorStore:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
 
-    def connect(self) -> psycopg.Connection:
+    def connect(self, *, register_vector_type: bool = True) -> psycopg.Connection:
+        """`register_vector_type=False` is for schema checks only: pgvector's
+        registration fails on a database where the schema (and so the
+        `vector` extension) was never applied."""
         conn = psycopg.connect(self._database_url)
-        register_vector(conn)
+        if register_vector_type:
+            register_vector(conn)
         return conn
 
     def get_or_create_repository(
