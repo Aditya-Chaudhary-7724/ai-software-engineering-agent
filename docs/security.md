@@ -240,7 +240,7 @@ Checkpoint data is persisted in PostgreSQL with a msgpack-only serializer: LangG
 
 ## 13e. Public Demo Principal (2026-11-12)
 
-**Status: backend scope IMPLEMENTED AND TESTED; rate limits, budget, propose-only demo tasks and the frontend are not built yet.**
+**Status: backend scope, demo model, rate limits and token budget IMPLEMENTED AND TESTED; propose-only demo tasks, pre-generated examples and the frontend are not built yet.**
 
 The public demo is a **second backend principal**, not a frontend-only mode. The frontend server holds two secrets and chooses which one to send; the backend decides what each may do:
 
@@ -253,6 +253,8 @@ The public demo is a **second backend principal**, not a frontend-only mode. The
 - **Role from the secret only.** `require_service_token` returns a `Principal` decided solely by which token matched (both compared in constant time, both always evaluated). No header or body field can select a role (tested with `X-Role`-style headers).
 - **Deny by default.** The guard runs at the `/api/v1` router, after authentication. `tests/api/test_demo_scope.py` enumerates the application's real routes: every route not deliberately allowlisted must answer `403 demo_forbidden`, and every allowlist entry must be a real route; the only non-GET entry is Ask.
 - **Fail closed.** A demo token shorter than 32 characters, or with no valid `DEMO_REPOSITORY_IDS`, is never accepted (401). `check_production_config.py` reports these and exits 1.
+- **Own model (Groq).** Demo requests use `DEMO_LLM_MODEL`, required and different from `LLM_MODEL`; Groq limits are per model, so demo traffic cannot use up the operator's quota. No fallback to the operator model.
+- **Limits and budget (`backend/demo/limits.py`, demo principal only).** Per visitor (IPv4 address or IPv6 /64) per hour, globally per minute, and a daily token budget (UTC), all env-configurable (`DEMO_ASK_*`, `DEMO_DAILY_TOKEN_BUDGET`). Stored in PostgreSQL (`demo_rate_events`, `demo_token_usage`), checked and recorded in one transaction under an advisory lock, so they hold across worker processes and restarts (12 concurrent requests against a limit of 3: exactly 3 admitted, tested). Checked before any retrieval or LLM work. The budget reserves before the call, settles to the provider-reported usage, keeps the reserve when none is reported, and refunds on failure. Refusals are `429 demo_rate_limited` / `429 demo_daily_limit_reached` with `Retry-After` and `retry_after_seconds`. The visitor IP comes from the frontend server (`X-Demo-Client-IP`, read only for the demo principal; missing or invalid → `400 demo_client_ip_required`) and is stored only as an HMAC (keyed with the demo token) of its network, never raw; rows are deleted after 2 days.
 - **Residual risk:** if the demo token is configured EQUAL to the operator token, it is the operator token and authenticates as the operator; the backend cannot distinguish identical secrets. The config check flags it (exit 1), and the frontend must refuse that configuration too.
 
 ## 14. Known Limitations

@@ -36,6 +36,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2] / "backend"
 # that is what makes "indexing refuses an out-of-date schema" trustworthy.
 SCHEMA_SHA256_BY_VERSION = {
     1: "7463bcb0816766e5c3b2131b18d95b93c2e5b7ae1fd9cd41ed52d88ed5759e63",
+    2: "d50eba0ac9e778770e4a5b63ceaf943d0fd30f69f1d468cf064c91905021b6aa",
 }
 
 

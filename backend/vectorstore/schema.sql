@@ -203,3 +203,25 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 2026-11-12 (schema version 2): public-demo limits (backend/demo/limits.py).
+-- Rate-limit events: one row per demo action admitted. `client_hash` is an
+-- HMAC of the visitor's network (IPv4 address, or IPv6 /64), keyed with a
+-- server secret: the raw IP is never stored. Rows older than 2 days are
+-- deleted by the limiter itself.
+CREATE TABLE IF NOT EXISTS demo_rate_events (
+    id BIGSERIAL PRIMARY KEY,
+    action TEXT NOT NULL,
+    client_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_demo_rate_events_action_created ON demo_rate_events (action, created_at);
+CREATE INDEX IF NOT EXISTS idx_demo_rate_events_client ON demo_rate_events (action, client_hash, created_at);
+
+-- Daily demo LLM token budget (UTC days): reserved before each call,
+-- settled to the provider-reported usage afterwards, refunded on failure.
+CREATE TABLE IF NOT EXISTS demo_token_usage (
+    day DATE PRIMARY KEY,
+    tokens BIGINT NOT NULL DEFAULT 0 CHECK (tokens >= 0),
+    requests INTEGER NOT NULL DEFAULT 0 CHECK (requests >= 0)
+);

@@ -21,15 +21,17 @@ It is a POST only so the question travels in the body, not in URLs/logs.
 """
 
 import logging
+import os
 from typing import Any, List, Optional
 
 import psycopg
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from graph.client import Neo4jClient
 from graph.exceptions import MissingCredentialsError as Neo4jMissingCredentialsError
 from graph.queries import repository_exists
+from demo.limits import DemoLimiter, DemoLimitError, Reservation, client_key
 from hybrid.service import HybridRAGService
 from jobs.ingestion import default_embedding_provider
 from rag.llm.exceptions import LLMConfigurationError, LLMQuotaExceededError
@@ -81,10 +83,43 @@ def _open_graph(client_factory, root_path: str):
         return _NoGraphClient(), "unavailable", None
 
 
+def _reserve_demo_ask(limiter: DemoLimiter, http_request: Request) -> Reservation:
+    """Admits one demo Ask or refuses it (429 with Retry-After). The client
+    IP comes from the frontend server (the only holder of the demo token);
+    it is reduced to an HMAC'd network and never stored raw."""
+    raw_ip = http_request.headers.get("x-demo-client-ip", "")
+    try:
+        key = client_key(raw_ip, os.environ["DEMO_API_SERVICE_TOKEN"])
+    except ValueError:
+        raise APIError(400, "demo_client_ip_required")
+    try:
+        return limiter.reserve_ask(key)
+    except DemoLimitError as exc:
+        raise APIError(
+            429, exc.code, headers={"Retry-After": str(exc.retry_after_seconds)},
+            details={"retry_after_seconds": exc.retry_after_seconds},
+        )
+    except psycopg.errors.UndefinedTable:
+        raise APIError(503, "schema_out_of_date")
+    except psycopg.OperationalError:
+        raise APIError(503, "database_unavailable")
+
+
+def _reported_tokens(llm_provider: Any) -> Optional[int]:
+    usage = getattr(llm_provider, "last_usage", None)
+    return usage.total_tokens if usage is not None else None
+
+
+def get_demo_limiter(database_url: str = Depends(get_database_url)) -> DemoLimiter:
+    return DemoLimiter(database_url)
+
+
 @router.post("/repositories/{repository_id}/ask", response_model=AskResponse)
 def ask(
     request: AskRequest,
+    http_request: Request,
     principal: Principal = Depends(require_service_token),
+    limiter: DemoLimiter = Depends(get_demo_limiter),
     record: RepositoryRecord = Depends(get_repository_record),
     database_url: str = Depends(get_database_url),
     neo4j_client_factory=Depends(get_neo4j_client_factory),
@@ -103,6 +138,55 @@ def ask(
     except LLMConfigurationError:
         logger.warning("ask refused: the LLM provider is misconfigured (see check_production_config.py)")
         raise APIError(503, "llm_not_configured")
+    # Demo limits come BEFORE any work: a refused visitor costs nothing.
+    reservation = _reserve_demo_ask(limiter, http_request) if principal.is_demo else None
+    succeeded = False
+    try:
+        result, graph_status, graph_built = _answer(
+            question, record, database_url, neo4j_client_factory, embedding_provider, llm_provider
+        )
+        succeeded = True
+    finally:
+        if reservation is not None:
+            try:
+                if succeeded:
+                    limiter.settle(reservation, _reported_tokens(llm_provider))
+                else:
+                    limiter.release(reservation)
+            except psycopg.Error:
+                logger.exception("could not settle the demo token reservation")
+
+    warnings: List[str] = []
+    if result.context_chunk_count == 0:
+        warnings.append("no_relevant_context")
+
+    return AskResponse(
+        repository_id=record.id,
+        question=question,
+        answer=AskAnswer(text=result.answer, generator=llm_name, is_placeholder=llm_name == "stub"),
+        retrieval=AskRetrieval(
+            embedding_provider=embedding_name,
+            semantic_embeddings=embedding_name != "deterministic_local",
+            graph=graph_status,
+            graph_built=graph_built,
+        ),
+        sources=[
+            AskSource(
+                relative_path=s.relative_path,
+                start_line=s.start_line,
+                end_line=s.end_line,
+                chunk_type=s.chunk_type,
+                symbol_name=s.symbol_name,
+                found_via=list(s.found_via),
+            )
+            for s in result.sources
+        ],
+        context_chunk_count=result.context_chunk_count,
+        warnings=warnings,
+    )
+
+
+def _answer(question, record, database_url, neo4j_client_factory, embedding_provider, llm_provider):
     graph_client, graph_status, graph_built = _open_graph(neo4j_client_factory, record.root_path)
 
     def run(client) -> Any:
@@ -142,35 +226,7 @@ def ask(
         raise APIError(502, "answer_generation_failed")
     finally:
         graph_client.close()
-
-    warnings: List[str] = []
-    if result.context_chunk_count == 0:
-        warnings.append("no_relevant_context")
-
-    return AskResponse(
-        repository_id=record.id,
-        question=question,
-        answer=AskAnswer(text=result.answer, generator=llm_name, is_placeholder=llm_name == "stub"),
-        retrieval=AskRetrieval(
-            embedding_provider=embedding_name,
-            semantic_embeddings=embedding_name != "deterministic_local",
-            graph=graph_status,
-            graph_built=graph_built,
-        ),
-        sources=[
-            AskSource(
-                relative_path=s.relative_path,
-                start_line=s.start_line,
-                end_line=s.end_line,
-                chunk_type=s.chunk_type,
-                symbol_name=s.symbol_name,
-                found_via=list(s.found_via),
-            )
-            for s in result.sources
-        ],
-        context_chunk_count=result.context_chunk_count,
-        warnings=warnings,
-    )
+    return result, graph_status, graph_built
 
 
 def _is_graph_error(exc: Exception) -> bool:

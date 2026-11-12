@@ -20,7 +20,8 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 # pins schema.sql's hash to this number and fails until both are updated).
 #   1 (2026-11-12): first versioned schema (includes embedding_384,
 #     repositories.embedding_model, schema_version).
-SCHEMA_VERSION = 1
+#   2 (2026-11-12): demo_rate_events, demo_token_usage (public-demo limits).
+SCHEMA_VERSION = 2
 
 
 def apply_schema(conn: psycopg.Connection) -> None:

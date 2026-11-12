@@ -248,6 +248,12 @@ def demo_configuration_problems() -> List[str]:
         problems.append("DEMO_REPOSITORY_IDS must be a comma-separated list of repository ids")
     if not demo_repository_ids():
         problems.append("demo mode is enabled but DEMO_REPOSITORY_IDS lists no repository")
+    for name in ("DEMO_ASK_PER_IP_PER_HOUR", "DEMO_ASK_GLOBAL_PER_MINUTE", "DEMO_DAILY_TOKEN_BUDGET", "DEMO_ASK_TOKEN_RESERVE"):
+        if not _bounded_int(name, 1, 10_000_000):
+            problems.append(f"{name} must be a positive integer")
+    budget, reserve = os.environ.get("DEMO_DAILY_TOKEN_BUDGET", "").strip(), os.environ.get("DEMO_ASK_TOKEN_RESERVE", "").strip()
+    if budget.isdigit() and reserve.isdigit() and int(reserve) > int(budget):
+        problems.append("DEMO_ASK_TOKEN_RESERVE must not exceed DEMO_DAILY_TOKEN_BUDGET")
     # On Groq, rate limits are per model: the demo gets its OWN model so its
     # traffic can never use up the operator's quota. Required, no fallback.
     if llm_provider_name() == "groq" and not os.environ.get("DEMO_LLM_MODEL", "").strip():
