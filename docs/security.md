@@ -240,7 +240,9 @@ Checkpoint data is persisted in PostgreSQL with a msgpack-only serializer: LangG
 
 ## 13e. Public Demo Principal (2026-11-12)
 
-**Status: backend scope, demo model, rate limits, token budget, propose-only demo tasks and pre-generated examples IMPLEMENTED AND TESTED (backend); the demo frontend is not built yet.**
+**Status: backend scope, demo model, rate limits, token budget, propose-only demo tasks and pre-generated examples IMPLEMENTED AND TESTED (backend). Demo frontend IMPLEMENTED AND TESTED (2026-11-26, `frontend/tests/demo-mode.test.js`) and rehearsed through Caddy on a local stack (`docs/deployment.md` section 24); not yet deployed.**
+
+**Frontend (2026-11-26):** "View demo" issues a 2-hour session whose role (`demo`) is inside the HMAC-signed session payload; the frontend server picks `DEMO_API_SERVICE_TOKEN` from that role alone and never falls back to the operator token (a demo session with demo mode turned off gets `503 demo_not_available`). It refuses a demo token equal to the operator token (demo mode stays off, the reason is logged server-side). The visitor address sent as `X-Demo-Client-IP` is the RIGHT-MOST `X-Forwarded-For` entry, and only with `TRUST_PROXY_HEADERS=true`; Caddy sets that header to the peer address (a forged one is replaced, verified); without a trusted proxy every visitor shares one bucket (`0.0.0.0`). Ingestion, re-index and approval decisions answer `403 demo_forbidden` in the frontend without a backend call; the backend refuses them anyway. **Fixed alongside:** the login limiter used the LEFT-most `X-Forwarded-For` entry, which a client chooses whenever the proxy appends; it now uses the right-most entry too.
 
 The public demo is a **second backend principal**, not a frontend-only mode. The frontend server holds two secrets and chooses which one to send; the backend decides what each may do:
 

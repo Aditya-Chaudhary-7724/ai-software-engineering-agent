@@ -431,6 +431,8 @@ Full detail — threat model, trust boundaries, per-phase findings, residual ris
 ### Deployment
 **Status: PARTIALLY IMPLEMENTED (Phase 15 — production infrastructure built and verified locally; no cloud deployment performed)**
 
+**Update (2026-11-26):** a single-VM production stack for Oracle Cloud A1 (Caddy → Next.js BFF → FastAPI → PostgreSQL + pgvector and Neo4j via docker compose), a frontend image, a CD workflow (arm64 images by git SHA, SSH deploy with rollback) and backup/restore scripts exist and were rehearsed on a local linux/arm64 Docker. Not deployed yet. See `docs/deployment.md` section 24.
+
 Full detail — target production architecture, what's implemented/tested vs. only a documented target, secrets categorization, health checks, CI, and honest dependency-vulnerability-scan results — lives in **[docs/deployment.md](deployment.md)**, not duplicated here. Summary: a minimal FastAPI app (`backend/api/`) exposes liveness/readiness health checks (Neo4j outages never block readiness, since Neo4j is optional); a production Docker image (`backend/Dockerfile`) was built and run locally as a non-root user with no baked-in secrets; `.github/workflows/ci.yml` runs the full test/security/type-check suite plus both Docker builds on every push/PR, with no auto-deploy job since no real deployment target is provisioned. The single most important architectural rule this phase reinforces: the application container (holds real credentials) and the Phase 10 sandbox container (executes untrusted repository code) are, and must remain, two separate images with no shared runtime and no Docker-socket access between them.
 
 ## Currently Implemented

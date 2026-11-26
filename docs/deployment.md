@@ -8,6 +8,8 @@ This document describes the ACTUAL state of this project's production readiness,
 
 No cloud deployment was performed in this phase. No deployment metrics are invented anywhere below.
 
+**2026-11-26 (Oracle Cloud A1 stack):** a frontend image, a single-VM docker compose stack (Caddy, frontend, backend, PostgreSQL + pgvector, Neo4j), a CD workflow and the VM operations scripts now exist. They were **rehearsed end to end on a local linux/arm64 Docker** (section 24) but **have not been deployed to Oracle Cloud yet**. `docs/deployment-progress.md` is the running log.
+
 **F8 (production-readiness review, 2026-11-07):** sections 1, 3, 11, 12, 15 and 19–22 were rewritten because they still described the Phase 15 state ("no frontend exists", "the API only serves health"), which F1–F6 made false. Other sections keep their Phase 15 text plus a dated **Update (F8)** note. Section 23 summarises the F8 review. Still true: **nothing has been deployed to any hosting platform.**
 
 ## 1. Production Architecture
@@ -64,7 +66,7 @@ None of these uses the `NEXT_PUBLIC_` prefix, so none is inlined into browser Ja
 
 Run: `npm ci && npm run build && npm start` (Node ≥ 24.7). `npm start` is `NODE_ENV=production`, so sign-in stays disabled until `APP_ORIGIN` is set (see `frontend/README.md`). Serve it behind HTTPS: the session cookie is `__Host-`-prefixed and `Secure` in production, and browsers only accept that over HTTPS or on `localhost`/`127.0.0.1`.
 
-**No frontend container image exists.** Use the platform's Node runtime (e.g. Vercel or any Node host), or add a Dockerfile when a container platform is actually chosen.
+**Update (2026-11-26): `frontend/Dockerfile` exists.** Two stages on `node:24.19.0-bookworm-slim`: `npm ci` and a standalone Next.js build (`NEXT_OUTPUT_STANDALONE=1`, set only there, so local `next start` is unchanged), then only the traced server, run as the unprivileged `node` user on `0.0.0.0:3000` with a `/login` healthcheck. No secret at build time. 405 MB. Built and run locally (linux/arm64) and in the section 24 rehearsal. Guarded by `tests/test_frontend_dockerfile.py`; CI builds it.
 
 **Security headers (F8):** every page and API route gets a per-request nonce Content-Security-Policy (`script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline` for scripts; `style-src 'unsafe-inline'` because a few components use style attributes). Production adds HSTS (`max-age=31536000`) when `APP_ORIGIN` is https. Tested by `frontend/tests/security-headers.test.js`, and against a real `next start` (2026-11-08) on every page route, authenticated with a throwaway session secret: `/`, `/login`, `/tasks`, `/traces`, `/graph`, `/ask`, `/repositories` and both 404 paths. Every `<script>` carried that response's nonce (11–13 per page); `next dev` gave 19/19 plus `'unsafe-eval'`.
 
@@ -233,7 +235,7 @@ Job `frontend` (F8): `npm ci`, `npm test` (Vitest), `npm run build`, `npm audit`
 
 After the fixes: 1081 passed, 0 failed, 13 skipped (no sandbox inside the API image, by design), 5 deselected (real-GitHub tests, to save quota).
 
-No deploy job: there is no provisioned target. A future `cd.yml` should be gated on this workflow and use GitHub encrypted secrets.
+**Update (2026-11-26): `.github/workflows/cd.yml`** builds linux/arm64 images on native arm64 runners after CI succeeds for a push to `main` of this repository, pushes them to GHCR tagged with the commit SHA, copies `deploy/` to the VM and runs `deploy.sh <sha>` over SSH with a pinned host key (environment `production`). Manual runs can deploy a SHA or roll back. GHCR images stay private: the deploy job logs the VM in with its own short-lived `GITHUB_TOKEN` (packages: read) and logs out afterwards; `deploy.sh` falls back to cached images when a pull fails outside CD. **Not yet run on GitHub** (it needs the VM and its secrets); it was linted with actionlint 1.7.7. The `gh` CLI is now installed on the development machine.
 
 **Test database guard (F8):** database fixtures delete whole tables in `TEST_DATABASE_URL`, so `tests/conftest.py` refuses the pytest session (exit 2, before any test runs) when `TEST_DATABASE_URL` is the application's database. Actual behaviour:
 - The application's database is `evaluation.safety.application_database_url()`: `DATABASE_URL`, or, when it is **unset**, the default the app falls back to (`<user>@localhost:5432/ai_swe_agent`). An unset `DATABASE_URL` does not disable the guard (it did before the F8 review fix).
@@ -311,7 +313,7 @@ DATABASE_URL=<new_database_url> python backend/scripts/apply_schema.py   # idemp
 
 Verified by dumping the development database (65 KB) into a scratch database: row count and content checksum of all 8 tables were identical to the source. `apply_schema.py` then left the data unchanged. The scratch database and dump file were deleted afterwards. This covers repositories, chunks, ingestion jobs, agent tasks **and the LangGraph checkpoint tables**, so pending approvals survive a restore. Note that restored `awaiting_approval` tasks keep their original expiry.
 
-In production, prefer the managed provider's automated snapshots / point-in-time recovery. The commands above are the portable fallback and the way to test a restore.
+**Update (2026-11-26):** the VM stack uses `deploy/backup.sh` (nightly cron, `pg_dump -Fc` inside the postgres container, checked with `pg_restore --list`, newest 7 kept, optional off-VM upload to Oracle Object Storage through a write-only pre-authenticated request URL) and `deploy/restore.sh` (`--verify` restores into a scratch database and compares every table's row count; `--replace` replaces the live database). Both were rehearsed locally (section 24). Off-VM upload: **not verified** (no bucket yet).
 
 **Neo4j — RECOMMENDATION, not tested:** Neo4j Community's `neo4j-admin database dump` needs the database stopped. The graph is **derived data**: re-indexing a repository with "build graph" rebuilds it from source, so a lost graph means downtime for graph features, not data loss.
 
@@ -327,7 +329,7 @@ The API itself is stateless in the ordinary HTTP sense (no in-memory session sta
 
 ## 17. Rollback Strategy
 
-**Status: DOCUMENTED TARGET.** Since `apply_schema.py` (section 5/14) is purely additive (`CREATE ... IF NOT EXISTS`, never `DROP`/`ALTER ... DROP COLUMN`), there is no destructive schema change to roll back FROM — reverting the application to a previous Docker image tag is sufficient; the schema remains compatible with an older application version as long as no column is ever removed (a discipline to maintain going forward, not something enforced by tooling today). No blue/green or canary deployment infrastructure exists or is proposed here — for a single-instance-scale deployment, "redeploy the previous image tag" is the appropriate, simple rollback mechanism, not overbuilt tooling for a scale this project hasn't reached.
+**Status (2026-11-26): IMPLEMENTED, rehearsed locally, not yet used in production.** `deploy/deploy.sh` records the current and previous image tags; `deploy.sh --rollback` redeploys the previous one, and a deploy whose health checks or HTTPS smoke test fail restarts the previous tag by itself and exits 1 (section 24). The schema stays additive only (`CREATE ... IF NOT EXISTS`, never `DROP`), so an older image keeps working against a newer schema as long as no column is ever removed (a discipline, not enforced by tooling). No blue/green or canary: a single VM, a few seconds of restart per deploy.
 
 ## 18. Security Considerations
 
@@ -335,7 +337,7 @@ Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicat
 
 ## 19. Known Limitations (as of F8)
 
-- **Not deployed anywhere.** The CI workflow passed on GitHub Actions on 2026-11-12 (commit `93f1d26`, section 11); there is still no CD.
+- **Not deployed anywhere yet.** The Oracle Cloud A1 stack is built and rehearsed locally (section 24); the CI workflow passed on GitHub Actions on 2026-11-12 (commit `93f1d26`, section 11); the CD workflow has not run yet.
 - **Tests do not run for agent tasks in a containerised API** (no Docker in the API image by design, and `SANDBOX_ENABLED` defaults to off). Changes are applied and reported as "tests not run", never verified (section 7).
 - **20 Python advisories accepted, with reasons** (section 12). The real fix needs Python 3.11 locally plus fastapi/requests and langgraph upgrades.
 - **Rollback of an applied agent change is not implemented.** An approved change is written to the clone; a failing test after approval is reported as such, never undone (`docs/evaluation.md` → "No rollback"; asserted by the `modsafety-failed-tests-no-rollback` evaluation case).
@@ -344,7 +346,7 @@ Fully covered in **[docs/security.md](security.md)** (Phase 14) — not duplicat
 - **CSP verified at the HTTP level only** (headers and nonce placement on a real `next start`); real-browser console verification is outstanding (section 3).
 - **No PostgreSQL connection pooling** (connection per operation; adequate at single-operator scale).
 - **Neo4j is shared** by development, tests and evaluation, namespaced rather than isolated. It has no TLS locally, `restart=no`, and is **exposed on the LAN** (all interfaces); it needs the loopback binding before use on an untrusted network (section 6).
-- **No frontend container image and no Docker Compose file.** Two images and a Next.js process are wired by hand.
+- ~~No frontend container image and no Docker Compose file.~~ Both exist since 2026-11-26 (sections 3 and 24).
 - **No transitive lock.** Local development moved to Python 3.11 (`.venv311`, 2026-11-12), matching CI and the image, but transitive versions are still unpinned, so local runs may still differ from what ships. A constraints file would close this.
 
 ## 20. What Is Implemented and Tested
@@ -353,11 +355,11 @@ Phases 1–15 and frontend phases F1–F7 (see `docs/architecture.md`, `docs/sec
 
 ## 21. What Is Ready to Deploy But Not Deployed
 
-The backend image (built in F8; non-root `appuser`, Python 3.11.17), the frontend production build (`next build` / `next start`, run locally), and the CI workflow (two jobs; passed on GitHub Actions on 2026-11-12, section 11). Each needs a real hosting target, TLS and secrets; none was provisioned.
+The backend image (non-root `appuser`, Python 3.11, fastembed model baked in, 954 MB), the frontend image (section 3), `deploy/docker-compose.prod.yml` with Caddy, the CI workflow (passed on GitHub Actions on 2026-11-12) and the CD workflow (not run yet). The whole stack was rehearsed on a local linux/arm64 Docker (section 24); it still needs the VM, DNS and secrets.
 
 ## 22. What Is Only a Documented Target Architecture
 
-A dedicated sandbox-worker service so deployed agent tasks can run tests (section 7); managed PostgreSQL/Neo4j hosting with automated backups; a CD pipeline; a shared login rate-limit store for multi-instance frontends; connection pooling; a frontend container image or Compose file if a container platform is chosen.
+A dedicated sandbox-worker service so deployed agent tasks can run tests (section 7); a shared login rate-limit store for multi-instance frontends; connection pooling.
 
 ## 23. F8 Production-Readiness Review (2026-11-07)
 
@@ -373,3 +375,45 @@ A dedicated sandbox-worker service so deployed agent tasks can run tests (sectio
 Fixed in F8: sandbox code ran as root; a forged Host header could strip `no-store` from source-code API responses; no script-restricting CSP and no HSTS; pytest could run its destructive fixtures against the application database; CORS allowed any request header; CI had no frontend checks and no Python dependency audit; CI test tools were unpinned; this document was stale.
 
 Reviewed and unchanged (sound): the BFF auth chain (Argon2id, signed `__Host-` cookie with `SameSite=Strict`, Origin and session-bound CSRF checks on every mutating route, login limiter before hashing); the backend service token (constant time, fail closed, attached once at the router); bound approval (one conditional `UPDATE` on status, interrupt ID, diff hash and unexpired TTL); `SKIP LOCKED` claims; stale-heartbeat recovery reporting `interrupted`; workers surviving database outages; path-traversal and symlink defences (re-run in `tests/security`); F7 evaluation isolation.
+
+## 24. Oracle Cloud A1 deployment (2026-11-26)
+
+**Status: BUILT AND REHEARSED LOCALLY; NOT DEPLOYED.** Everything below ran on this development machine's Docker (Apple Silicon, so the same linux/arm64 images the A1 VM runs), with `SITE_ADDRESS=localhost` (Caddy's internal CA instead of Let's Encrypt) and a fake Groq key. Nothing here has run on Oracle Cloud.
+
+**Target:** one Oracle Cloud Always Free A1 VM (arm64, Ubuntu), a DuckDNS hostname, Groq's free tier (`LLM_PROVIDER=groq`, separate `LLM_MODEL` and `DEMO_LLM_MODEL`), local fastembed embeddings (bge-small, 384 dimensions, baked into the image). No Pay-As-You-Go upgrade, no paid service.
+
+```
+internet ──443/80──▶ caddy ──▶ frontend (Next.js BFF) ──▶ backend (FastAPI) ──▶ postgres (+pgvector)
+                       │                                    ▲                  └▶ neo4j
+                       └── GET /health/live, /health/ready ─┘   (internal "data" network, no egress)
+```
+
+**Files (`deploy/`):**
+
+| File | Purpose |
+|---|---|
+| `docker-compose.prod.yml` | the stack. Only Caddy publishes ports (80, 443, 443/udp). Networks: `edge` (caddy, frontend), `app` (caddy, frontend, backend; egress for Groq and GitHub), `data` (backend, postgres, neo4j; `internal: true`). Each container gets an explicit environment list, so the frontend never sees the Groq key or database password, and the backend never sees the session secret. Memory limits (caddy 256m, frontend 512m, backend 3g, postgres 1g, neo4j 1536m with a 512m heap and 256m page cache), log rotation, `no-new-privileges`, `cap_drop: ALL` and read-only roots for caddy/frontend/backend. `SANDBOX_ENABLED=false`; no container mounts the Docker socket. |
+| `Caddyfile` | automatic HTTPS for `SITE_ADDRESS`; `/docs`, `/redoc`, `/openapi.json` answer 404; `GET /health/live` and `/health/ready` go to the backend (nothing else of the backend is routed); everything else goes to the frontend with `X-Forwarded-For` **set** to the peer address; 1 MB request bodies; no `Server` header; admin API off. |
+| `deploy.sh <sha>` | pull → databases up → `apply_schema.py` with the NEW image → `check_production_config.py` → start and wait for health → HTTPS smoke test through Caddy (`/health/live`, `/health/ready`, `/login`). On failure the previous tag is started again (exit 1). `--rollback`, `--status`. |
+| `backup.sh`, `restore.sh` | section 15. |
+| `bootstrap.sh [<sha>]` | idempotent VM setup: keys-only SSH (only if an authorized key exists), unattended upgrades, Docker from Docker's apt repository, host firewall 22/80/443 (Oracle's iptables rules, else ufw), cron for DuckDNS (every 5 minutes) and the nightly backup, then `deploy.sh`. |
+| `duckdns.sh` | updates the DuckDNS record; the token goes to curl on stdin, never argv or a log. |
+| `make-prod-env.sh` | runs on the operator's machine: creates `~/.config/ai-swe-agent/prod.env` (mode 600, outside the repository), generates the database passwords, service token and session secret, never prints a value; `--check` lists missing keys; `--enable-demo <ids>` sets `DEMO_REPOSITORY_IDS` and generates the demo token. |
+| `prod.env.example` | the template (no values). |
+
+**Demo seeding:** `backend/scripts/seed_demo.py` (inside the backend container) indexes `backend/demo/seed_repos.json` through the running API (the real ingestion worker), prints `DEMO_REPOSITORY_IDS`, then runs `generate_demo_examples.py` for each repository. Demo repositories: **pallets/markupsafe, pallets/itsdangerous, psf/requests**. Demo mode stays off until `make-prod-env.sh --enable-demo <ids>` and a redeploy, because `check_production_config.py` (run by every deploy) refuses a demo token with no demo repositories.
+
+**Rehearsal results (2026-11-26, local linux/arm64, test tags `aaaaaaa1` / `bbbbbbb2` / `ccccccc3`):**
+- `deploy.sh`: schema applied, config check OK, all five containers healthy, HTTPS smoke test passed.
+- Exposure: only Caddy has published ports; `/docs`, `/redoc`, `/openapi.json` → 404; `/health/live`, `/health/ready` → 200 (`{"ready":true,...postgres reachable, neo4j reachable}`); `http://` → 308 to `https://`; the backend on `127.0.0.1:8000` → no connection; `POST /health/ready` → never reaches the backend; HSTS and the nonce CSP present; no `Server` header.
+- Caddy replaced a forged `X-Forwarded-For: 6.6.6.6` (and `6.6.6.6, 7.7.7.7`) with the real peer address (checked against an echo server behind the same Caddyfile).
+- Seeding: the three demo repositories were cloned and indexed with the knowledge graph in 90 s (repositories 1, 2, 3; 1085 chunks); a second run reused them.
+- Demo: "View demo" shown; a cross-site demo sign-in → 403; the banner shows; traces redirect; the add-repository form is hidden; ingest / re-index / approval decision → `demo_forbidden`; a non-demo repository → 404; the 2nd Ask within a minute → `429 demo_rate_limited` with `retryAfterSeconds: 60`. The 1st Ask reached the LLM step and failed (`502 answer_generation_failed`) because the rehearsal used a fake Groq key: **cited live answers and pre-generated examples are not verified yet.**
+- Operator: wrong password → 401; correct → `__Host-asea_session` cookie; traces 200; no demo banner.
+- Backup → 2.2 MB dump; `restore.sh --verify` → all 12 tables' row counts equal; after deleting 814 chunks, `restore.sh --replace` → 1085 chunks again, scratch database gone, `/health/ready` 200.
+- Rollback: deploy `bbbbbbb2` → `--rollback` → `aaaaaaa1` running; a deliberately broken tag (`ccccccc3`, frontend exits at start) → FAILED, previous tag restarted automatically, exit 1, site still 200.
+
+**Not verified (needs the real VM):** Let's Encrypt issuance, DuckDNS, the Oracle firewall/security list, `bootstrap.sh` itself (it targets Ubuntu, not macOS), the CD workflow, GHCR pulls, Groq answers and examples, the off-VM backup upload, real visitor IPs, memory headroom on the VM.
+
+Known gaps: the approved "10 KB max file" demo limit is not a separate check; the per-task token ceiling (`DEMO_TASK_MAX_TOKENS`) already refuses a task before any LLM call when its file would not fit. Neo4j and the clones are not backed up (derived data: `seed_demo.py --reindex` rebuilds them). The database user is the PostgreSQL superuser of its own container (it needs `CREATE EXTENSION`); a separate least-privilege application role is a follow-up.
+
