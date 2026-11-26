@@ -19,6 +19,10 @@ const nextConfig = {
   // Don't let `next dev` write AGENTS.md (managed AI-agent instructions)
   // into the project when it detects a coding agent.
   agentRules: false,
+  // Container builds only (frontend/Dockerfile sets NEXT_OUTPUT_STANDALONE=1):
+  // a self-contained server with just the traced dependencies. Local
+  // `npm start` (next start) does not support standalone output, so it stays off.
+  output: process.env.NEXT_OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
   poweredByHeader: false,
   reactStrictMode: true,
   async headers() {
