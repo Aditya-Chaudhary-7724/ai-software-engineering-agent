@@ -1,0 +1,35 @@
+{
+  "_comment": "Public demo repositories (seeded by backend/scripts/seed_demo.py). Small, well-known, pure-Python projects. Each task targets a SHORT file so a live demo task fits DEMO_TASK_MAX_TOKENS.",
+  "repositories": [
+    {
+      "github_url": "https://github.com/pallets/markupsafe",
+      "questions": [
+        "How does escape() treat an object that has an __html__ method?",
+        "What is the difference between escape and escape_silent?",
+        "How does Markup.striptags remove tags and comments?",
+        "How does MarkupSafe choose between the C speedups and the pure-Python implementation?"
+      ],
+      "task": "Add a docstring to _escape_inner in src/markupsafe/_native.py explaining which characters it replaces."
+    },
+    {
+      "github_url": "https://github.com/pallets/itsdangerous",
+      "questions": [
+        "How does Signer.verify_signature compare signatures?",
+        "How does TimestampSigner enforce max_age?",
+        "Which key derivation options does Signer support?",
+        "How does the URL-safe serializer make its output safe for URLs?"
+      ],
+      "task": "Add docstrings to int_to_bytes and bytes_to_int in src/itsdangerous/encoding.py."
+    },
+    {
+      "github_url": "https://github.com/psf/requests",
+      "questions": [
+        "How does Session.request merge per-request settings with the session's settings?",
+        "How does HTTPAdapter configure retries?",
+        "How does requests decide whether to strip the Authorization header on a redirect?",
+        "What does dispatch_hook do with a hook's return value?"
+      ],
+      "task": "Add a docstring to default_hooks in src/requests/hooks.py."
+    }
+  ]
+}
