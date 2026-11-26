@@ -1,0 +1,159 @@
+# CD: build linux/arm64 images, push them to GHCR tagged with the git SHA,
+# and deploy that SHA to the Oracle Cloud VM over SSH.
+#
+# Runs only after the CI workflow SUCCEEDED for a PUSH to main of THIS
+# repository (never for a pull request, never for a fork). A manual run
+# (Actions -> CD -> Run workflow) can deploy a given SHA or roll back.
+#
+# The VM does the actual switch (deploy/deploy.sh): databases up, schema,
+# config check, start, health checks, HTTPS smoke test, and automatic
+# rollback to the previous tag on failure. Images are public on GHCR, so the
+# VM holds no registry credential.
+#
+# Secrets (environment "production", restricted to the main branch):
+#   DEPLOY_HOST          the VM's public IP or hostname
+#   DEPLOY_USER          SSH user (ubuntu)
+#   DEPLOY_SSH_KEY       private key of a dedicated deploy key pair
+#   DEPLOY_KNOWN_HOSTS   the VM's host key line(s), pinned (no TOFU)
+# Trust note: whoever controls this workflow on main controls what runs on
+# the VM (any image, any compose file). That is inherent to CD; the key is
+# scoped to the production environment and main.
+
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to build and deploy (empty = the latest main commit)"
+        required: false
+        default: ""
+      rollback:
+        description: "Instead: roll back to the previously deployed tag"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  DEPLOY_DIR: /opt/ai-swe-agent
+
+jobs:
+  resolve:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+      registry: ${{ steps.sha.outputs.registry }}
+    steps:
+      - id: sha
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          sha="${RUN_SHA:-${INPUT_SHA:-$GITHUB_SHA}}"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit SHA: $sha"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "registry=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    if: ${{ !inputs.rollback }}
+    # Native arm64 (free for public repositories): no QEMU emulation.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push ${{ matrix.service }} (linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.service }}/Dockerfile
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ needs.resolve.outputs.registry }}/ai-swe-agent-${{ matrix.service }}:${{ needs.resolve.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.resolve.outputs.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  deploy:
+    needs: [resolve, build]
+    if: ${{ always() && needs.resolve.result == 'success' && (needs.build.result == 'success' || inputs.rollback) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Configure SSH (pinned host key)
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+      - name: Copy the deploy files (never prod.env, which lives only on the VM)
+        if: ${{ !inputs.rollback }}
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER }}
+        run: |
+          tar -C deploy -czf - docker-compose.prod.yml Caddyfile postgres-init \
+              lib.sh deploy.sh backup.sh restore.sh duckdns.sh bootstrap.sh \
+            | ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$USER_NAME@$HOST" \
+                "tar -C '$DEPLOY_DIR' -xzf - --no-same-owner && chmod 755 '$DEPLOY_DIR'/*.sh"
+      - name: Deploy ${{ needs.resolve.outputs.sha }}
+        if: ${{ !inputs.rollback }}
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$USER_NAME@$HOST" "'$DEPLOY_DIR/deploy.sh' '$SHA'"
+      - name: Roll back to the previous tag
+        if: ${{ inputs.rollback }}
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER }}
+        run: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$USER_NAME@$HOST" "'$DEPLOY_DIR/deploy.sh' --rollback"
+      - name: Show the deployed tags
+        if: always()
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER }}
+        run: ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$USER_NAME@$HOST" "'$DEPLOY_DIR/deploy.sh' --status" || true
+      - name: Remove the key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
