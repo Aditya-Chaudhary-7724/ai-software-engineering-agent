@@ -3,27 +3,34 @@
 # depth alongside backend/Dockerfile's own COPY instructions, which
 # never reference any of these paths anyway.
 
-# Secrets — never sent to the Docker daemon, let alone baked into an image
-.env
-.env.*
-!.env.example
+# Secrets — never sent to the Docker daemon, let alone baked into an image.
+# Patterns here match from the context ROOT only, so every rule that must
+# apply in subdirectories (frontend/.env.local, backend/__pycache__, ...)
+# needs a **/ form. Fixed 2026-11-26: frontend/.env.local, frontend/
+# node_modules, frontend/.next and .venv311 were all in the build context.
+# tests/test_dockerignore.py guards these.
+**/.env
+**/.env.*
+!**/.env.example
 
 # Version control
 .git
 .gitignore
 
 # Python
-__pycache__/
-*.py[cod]
+**/__pycache__/
+**/*.py[cod]
 .venv/
+.venv*/
 venv/
-.pytest_cache/
-.mypy_cache/
+**/.pytest_cache/
+**/.mypy_cache/
 
-# Node: frontend/ is the Next.js app. It is not part of this backend image
-# (no COPY references it) and has no container image of its own yet.
-node_modules/
-.next/
+# Node: frontend/Dockerfile installs dependencies with `npm ci` and builds
+# inside the image; the host's node_modules (macOS binaries) and build
+# output must never be copied over them.
+**/node_modules/
+**/.next/
 
 # Local observability trace files — runtime output, never part of a build
 .observability/
@@ -37,5 +44,10 @@ tests/
 *.md
 
 # Local databases used only by local scripts/tests
-*.db
-*.sqlite
+**/*.db
+**/*.sqlite
+
+# Deploy-time files (SSH keys, production env files) never belong in an image
+**/*.pem
+**/*.key
+**/prod.env
