@@ -5,7 +5,7 @@ import JobProgress from '@/components/job-progress';
 import { EmptyState, ErrorNotice, PageHeader, Panel, StatusDot, Tag } from '@/components/ui';
 import { formatCount, formatTimestamp } from '@/lib/format';
 import { api } from '@/lib/server/backend';
-import { getCsrfToken } from '@/lib/server/dal';
+import { getCsrfToken, getSession, isDemoSession } from '@/lib/server/dal';
 
 export const metadata = { title: 'Repositories' };
 
@@ -14,10 +14,12 @@ function graphReachable(capabilities) {
 }
 
 export default async function RepositoriesPage() {
+  const demo = isDemoSession(await getSession());
   const [result, capabilities, jobs, csrfToken] = await Promise.all([
     api.repositories(200, 0),
     api.capabilities(),
-    api.jobs({ limit: 8 }),
+    // Ingestion jobs are operator-only (the backend refuses them for the demo).
+    demo ? Promise.resolve({ ok: false, error: 'demo_forbidden' }) : api.jobs({ limit: 8 }),
     getCsrfToken(),
   ]);
   const ingestionAvailable = capabilities.ok && capabilities.data.features.repository_ingestion;
@@ -30,7 +32,7 @@ export default async function RepositoriesPage() {
         description="Repositories indexed into PostgreSQL + pgvector. Add a public GitHub repository by URL; cloning and indexing run as background jobs on the server."
         meta={result.ok ? `${formatCount(result.data.total)} total` : null}
       />
-      <Panel title="Add a GitHub repository">
+      {demo ? null : <Panel title="Add a GitHub repository">
         {!capabilities.ok ? (
           <div className="p-4"><ErrorNotice code={capabilities.error} /></div>
         ) : ingestionAvailable ? (
@@ -40,7 +42,7 @@ export default async function RepositoriesPage() {
             The backend needs DATABASE_URL and an absolute WORKSPACE_ROOT, and its background worker must be running (see the backend README).
           </EmptyState>
         )}
-      </Panel>
+      </Panel>}
 
       {jobs.ok && jobs.data.jobs.length ? (
         <Panel title="Recent jobs" meta="newest first">

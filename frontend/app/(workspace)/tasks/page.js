@@ -1,19 +1,24 @@
 import Link from 'next/link';
 
 import AgentTaskForm from '@/components/agent-task-form';
+import DemoExamples from '@/components/demo-examples';
 import { EmptyState, ErrorNotice, PageHeader, Panel, StatusDot } from '@/components/ui';
 import { statusLabel, statusTone } from '@/lib/agent-tasks';
 import { formatTimestamp } from '@/lib/format';
 import { api } from '@/lib/server/backend';
-import { getCsrfToken } from '@/lib/server/dal';
+import { getCsrfToken, getSession, isDemoSession } from '@/lib/server/dal';
+
+const MAX_EXAMPLE_REPOSITORIES = 5;
 
 export const metadata = { title: 'Agent tasks' };
 
 export default async function TasksPage({ searchParams }) {
   const requested = (await searchParams)?.repository;
+  const demo = isDemoSession(await getSession());
   const [repositories, tasks, capabilities, csrfToken] = await Promise.all([
     api.repositories(200, 0),
-    api.agentTasks({ limit: 25 }),
+    // The task list is operator-only; a demo visitor reaches their own task by its link.
+    demo ? Promise.resolve(null) : api.agentTasks({ limit: 25 }),
     api.capabilities(),
     getCsrfToken(),
   ]);
@@ -21,13 +26,19 @@ export default async function TasksPage({ searchParams }) {
   const names = new Map((repositories.ok ? repositories.data.repositories : []).map((r) => [r.id, r.github_full_name ?? r.name]));
   const workerRunning = capabilities.ok && capabilities.data.features?.agent_execution === true;
   const initialRepositoryId = usable.some((r) => String(r.id) === requested) ? requested : undefined;
+  const exampleRepos = demo ? usable.slice(0, MAX_EXAMPLE_REPOSITORIES) : [];
+  const examples = await Promise.all(exampleRepos.map((r) => api.demoExamples(r.id)));
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Workspace"
         title="Agent tasks"
-        description="Give the agent a task. It routes the request (answer or modify), runs in the background, and for a code change shows you the exact proposed diff. Nothing is written until you approve that diff — and nothing is ever committed or pushed. For read-only questions, use Ask."
+        description={
+          demo
+            ? 'Give the agent a task. It routes the request (answer or modify), runs in the background, and for a code change shows the exact proposed diff. In the demo every task stops there: proposals are display-only and are never applied.'
+            : 'Give the agent a task. It routes the request (answer or modify), runs in the background, and for a code change shows you the exact proposed diff. Nothing is written until you approve that diff — and nothing is ever committed or pushed. For read-only questions, use Ask.'
+        }
       />
       {!repositories.ok ? (
         <ErrorNotice code={repositories.error} />
@@ -46,7 +57,9 @@ export default async function TasksPage({ searchParams }) {
         </>
       )}
 
-      <Panel title="Recent tasks" meta={tasks.ok ? `${tasks.data.tasks.length}` : undefined}>
+      {exampleRepos.map((repository, i) => <DemoExamples key={repository.id} repository={repository} result={examples[i]} show="task" />)}
+
+      {tasks === null ? null : <Panel title="Recent tasks" meta={tasks.ok ? `${tasks.data.tasks.length}` : undefined}>
         {!tasks.ok ? (
           <div className="p-4"><ErrorNotice code={tasks.error} compact /></div>
         ) : tasks.data.tasks.length === 0 ? (
@@ -77,7 +90,7 @@ export default async function TasksPage({ searchParams }) {
             </tbody>
           </table>
         )}
-      </Panel>
+      </Panel>}
     </div>
   );
 }

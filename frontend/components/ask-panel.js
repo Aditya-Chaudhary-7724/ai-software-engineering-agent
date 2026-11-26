@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 import { answerNotices, askErrorMessage, citationHref, foundViaLabel } from '@/lib/ask';
+import { retryAfterFrom } from '@/lib/demo';
 import { errorCodeFromResponse } from '@/lib/response-errors';
 
 import { Tag } from './ui';
@@ -22,6 +23,7 @@ export default function AskPanel({ repositories, initialRepositoryId, csrfToken 
   const [question, setQuestion] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(null);
+  const [retryAfter, setRetryAfter] = useState(null);
   const [history, setHistory] = useState([]); // newest first, this page only — never persisted
 
   const trimmed = question.trim();
@@ -46,6 +48,7 @@ export default function AskPanel({ repositories, initialRepositoryId, csrfToken 
         setQuestion('');
       } else {
         setError(errorCodeFromResponse(response.status, body));
+        setRetryAfter(retryAfterFrom(body));
       }
     } catch {
       setError('backend_unreachable');
@@ -99,7 +102,7 @@ export default function AskPanel({ repositories, initialRepositoryId, csrfToken 
         </div>
         {error ? (
           <p role="alert" className="border-l-2 border-err px-3 py-1.5 text-sm text-err">
-            {askErrorMessage(error)} <span className="font-mono text-xs text-ink-faint">({error})</span>
+            {askErrorMessage(error, retryAfter)} <span className="font-mono text-xs text-ink-faint">({error})</span>
           </p>
         ) : null}
       </form>

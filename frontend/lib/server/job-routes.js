@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { requireAuthenticatedMutation } from './auth-handlers';
+import { requireOperatorMutation } from './auth-handlers';
 import { api } from './backend';
 import { REPOSITORY_ID, errorResponse as error, fromBackend, readJsonObject as readJson } from './route-helpers';
 
@@ -10,13 +10,14 @@ import { REPOSITORY_ID, errorResponse as error, fromBackend, readJsonObject as r
  * repository id; this server validates the shapes, then builds the backend
  * request from those validated values alone — unknown fields (a path, a
  * workspace root) are never forwarded. Every mutation goes through
- * `requireAuthenticatedMutation`: session + same origin + CSRF token.
+ * `requireOperatorMutation`: session + same origin + CSRF token, and the
+ * session must be the operator's (the public demo cannot ingest).
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export async function handleSubmitIngestion(request) {
-  const guard = requireAuthenticatedMutation(request);
+  const guard = requireOperatorMutation(request);
   if (guard.response) return guard.response;
   const body = await readJson(request);
   if (!body || typeof body.githubUrl !== 'string' || body.githubUrl.length === 0 || body.githubUrl.length > 300) {
@@ -27,7 +28,7 @@ export async function handleSubmitIngestion(request) {
 }
 
 export async function handleReindex(request, repositoryId) {
-  const guard = requireAuthenticatedMutation(request);
+  const guard = requireOperatorMutation(request);
   if (guard.response) return guard.response;
   if (!REPOSITORY_ID.test(repositoryId ?? '')) return error(400, 'invalid_request');
   const body = await readJson(request);

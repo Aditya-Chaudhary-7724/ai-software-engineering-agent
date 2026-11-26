@@ -14,7 +14,12 @@ export const errorResponse = (status, code, extra = {}) =>
 
 export function fromBackend(result) {
   if (result.ok) return NextResponse.json(result.data, { status: result.status, headers: NO_STORE });
-  return errorResponse(result.status, result.error, result.repositoryId ? { repositoryId: result.repositoryId } : {});
+  const extra = {};
+  if (result.repositoryId) extra.repositoryId = result.repositoryId;
+  if (result.retryAfterSeconds) extra.retryAfterSeconds = result.retryAfterSeconds;
+  const response = errorResponse(result.status, result.error, extra);
+  if (result.retryAfterSeconds) response.headers.set('Retry-After', String(result.retryAfterSeconds));
+  return response;
 }
 
 /** A JSON object body of at most `maxBytes`, or null. */

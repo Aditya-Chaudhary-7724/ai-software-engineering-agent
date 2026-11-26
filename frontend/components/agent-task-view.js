@@ -39,7 +39,7 @@ import { Panel, StatusDot, Tag } from './ui';
 // Literal class names so Tailwind's source scan sees them.
 const TONE_TEXT_CLASS = { ok: 'text-ok', err: 'text-err', warn: 'text-warn' };
 
-export default function AgentTaskView({ initialTask, csrfToken, repositoryName }) {
+export default function AgentTaskView({ initialTask, csrfToken, repositoryName, canViewTraces = true }) {
   const [task, setTask] = useState(initialTask);
   const [failures, setFailures] = useState(0);
   const [stoppedPolling, setStoppedPolling] = useState(null);
@@ -278,9 +278,11 @@ export default function AgentTaskView({ initialTask, csrfToken, repositoryName }
             ))}
           </ol>
         )}
-        <div className="border-t border-rule px-4 py-2 text-right text-xs">
-          <Link href={`/traces/${task.trace_id}`} className="text-accent hover:underline">Open trace →</Link>
-        </div>
+        {canViewTraces ? (
+          <div className="border-t border-rule px-4 py-2 text-right text-xs">
+            <Link href={`/traces/${task.trace_id}`} className="text-accent hover:underline">Open trace →</Link>
+          </div>
+        ) : null}
       </Panel>
     </div>
   );

@@ -3,6 +3,7 @@
  * honest retrieval/generation notices shown with every answer.
  */
 
+import { demoLimitMessage } from './demo';
 import { SERVER_SIDE_MESSAGES } from './response-errors';
 
 /** Link to the cited file, highlighting and scrolling to the cited lines. */
@@ -79,6 +80,6 @@ const ASK_ERRORS = {
   unauthenticated: 'Your session has expired. Sign in again.',
 };
 
-export function askErrorMessage(code) {
-  return ASK_ERRORS[code] ?? 'The question could not be answered.';
+export function askErrorMessage(code, retryAfterSeconds = null) {
+  return demoLimitMessage(code, retryAfterSeconds) ?? ASK_ERRORS[code] ?? 'The question could not be answered.';
 }

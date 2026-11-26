@@ -4,12 +4,14 @@ import TraceTable from '@/components/trace-table';
 import { EmptyState, ErrorNotice, PageHeader, Panel } from '@/components/ui';
 import { formatCount } from '@/lib/format';
 import { api } from '@/lib/server/backend';
+import { requireOperatorSession } from '@/lib/server/dal';
 
 export const metadata = { title: 'Agent traces' };
 
 const PAGE_SIZE = 25;
 
 export default async function TracesPage({ searchParams }) {
+  await requireOperatorSession();
   const raw = Number((await searchParams)?.page ?? '1');
   const page = Number.isInteger(raw) && raw >= 1 && raw <= 10_000 ? raw : 1;
   const result = await api.traces(PAGE_SIZE, (page - 1) * PAGE_SIZE);

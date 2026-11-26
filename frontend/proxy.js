@@ -13,7 +13,7 @@ import { applySecurityHeaders, buildContentSecurityPolicy, createNonce, security
  * session again (lib/server/dal.js), so a proxy bypass alone exposes nothing.
  */
 
-const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout']);
+const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/demo', '/api/auth/logout']);
 
 function currentSession(request) {
   try {

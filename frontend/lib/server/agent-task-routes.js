@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { requireAuthenticatedMutation } from './auth-handlers';
+import { requireAuthenticatedMutation, requireOperatorMutation } from './auth-handlers';
 import { api } from './backend';
 import { REPOSITORY_ID, errorResponse as error, fromBackend, readJsonObject } from './route-helpers';
 
@@ -51,7 +51,8 @@ export async function handleGetAgentTask(taskId) {
 }
 
 export async function handleAgentDecision(request, taskId) {
-  const guard = requireAuthenticatedMutation(request);
+  // Demo tasks are proposal-only; a demo session can never decide anything.
+  const guard = requireOperatorMutation(request);
   if (guard.response) return guard.response;
   if (!UUID.test(taskId ?? '')) return error(400, 'invalid_task_id');
   const body = await readJsonObject(request);

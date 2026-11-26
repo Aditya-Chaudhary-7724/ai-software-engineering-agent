@@ -4,6 +4,7 @@ import TraceTable from '@/components/trace-table';
 import { EmptyState, ErrorNotice, PageHeader, Panel, StatusDot } from '@/components/ui';
 import { formatCount, formatTimestamp } from '@/lib/format';
 import { api } from '@/lib/server/backend';
+import { getSession, isDemoSession } from '@/lib/server/dal';
 
 export const metadata = { title: 'Dashboard' };
 
@@ -22,11 +23,24 @@ const FEATURE_LABELS = {
 };
 
 export default async function DashboardPage() {
-  const [capabilities, repositories, traces] = await Promise.all([api.capabilities(), api.repositories(5, 0), api.traces(8, 0)]);
+  const demo = isDemoSession(await getSession());
+  const [capabilities, repositories, traces] = await Promise.all([
+    api.capabilities(),
+    api.repositories(5, 0),
+    // Traces are operator-only (the backend refuses them for the demo).
+    demo ? Promise.resolve(null) : api.traces(8, 0),
+  ]);
 
   return (
     <div className="space-y-6">
       <PageHeader eyebrow="Workspace" title="Dashboard" description="Live state of the backend, indexed repositories, and recorded agent runs. Every value below comes from the backend API." />
+      {demo ? (
+        <Panel title="Try it" bodyClassName="grid gap-px bg-rule sm:grid-cols-3">
+          <Link href="/ask" className="bg-surface px-4 py-3 text-sm hover:bg-sunken"><span className="font-medium">Ask a question →</span><span className="mt-1 block text-ink-muted">Cited answers from hybrid retrieval, plus instant pre-generated examples.</span></Link>
+          <Link href="/tasks" className="bg-surface px-4 py-3 text-sm hover:bg-sunken"><span className="font-medium">Propose a change →</span><span className="mt-1 block text-ink-muted">The agent stops at a reviewed diff. Demo proposals are never applied.</span></Link>
+          <Link href="/graph" className="bg-surface px-4 py-3 text-sm hover:bg-sunken"><span className="font-medium">Explore the graph →</span><span className="mt-1 block text-ink-muted">Files, classes and functions from the knowledge graph.</span></Link>
+        </Panel>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <Panel
@@ -70,7 +84,7 @@ export default async function DashboardPage() {
         </Panel>
       </div>
 
-      <Panel title="Recent agent runs" meta={traces.ok ? `${formatCount(traces.data.total)} recorded` : null}>
+      {traces === null ? null : <Panel title="Recent agent runs" meta={traces.ok ? `${formatCount(traces.data.total)} recorded` : null}>
         {!traces.ok ? (
           <div className="p-4"><ErrorNotice code={traces.error} /></div>
         ) : traces.data.total === 0 ? (
@@ -83,7 +97,7 @@ export default async function DashboardPage() {
             </div>
           </>
         )}
-      </Panel>
+      </Panel>}
     </div>
   );
 }

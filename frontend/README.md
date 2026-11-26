@@ -15,6 +15,32 @@ file explorer, Ask (read-only Q&A with citations), knowledge graph, agent
 tasks with diff review and explicit approval, agent-trace viewer.
 Tests/evaluation (F7) appears in the navigation as disabled.
 
+## Public demo (2026-11-26)
+
+Optional, on when `DEMO_API_SERVICE_TOKEN` is set (>= 32 characters and
+different from `API_SERVICE_TOKEN`; anything else keeps it off).
+
+- The sign-in page shows **View demo**: no password. `POST /api/auth/demo`
+  (same origin only) issues a 2-hour session whose **signed** role is `demo`.
+- `lib/server/backend.js` picks the token from that role alone: the demo
+  session sends `DEMO_API_SERVICE_TOKEN` and the visitor's address
+  (`X-Demo-Client-IP`, the right-most `X-Forwarded-For` entry when
+  `TRUST_PROXY_HEADERS=true`, otherwise one shared `0.0.0.0` bucket). If demo
+  mode is turned off while a demo session is alive, requests fail with
+  `demo_not_available`; they never fall back to the operator token.
+- The **backend** enforces the demo scope (`backend/api/demo_scope.py`). This
+  app only mirrors it for a clearer UI: ingestion, re-index and approval
+  decisions answer `403 demo_forbidden` without calling the backend; traces
+  and the task list redirect to the dashboard; operator controls are hidden.
+- Every demo page shows the banner "Live demo, read-only, daily limits".
+  Ask and Agent tasks show the repository's **pre-generated examples**
+  (instant, no quota). Limit refusals (`429`) carry `retryAfterSeconds` and
+  get a friendly message that says when to retry and points to the examples.
+- Demo tasks end in status `proposed`: the diff is shown as display-only; no
+  Approve/Reject controls exist for it.
+
+Tests: `tests/demo-mode.test.js`, `tests/dal.test.js`.
+
 ## Agent tasks (F6)
 
 - `/tasks` — task form: pick a repository, write an instruction, **Check
@@ -130,6 +156,7 @@ Never commit `.env.local`; it is covered by the repository's `.gitignore`
 | `TRUST_PROXY_HEADERS` | no | `true` only behind a proxy that overwrites `X-Forwarded-For` |
 | `BACKEND_URL` | yes | FastAPI base URL, reachable from this server |
 | `API_SERVICE_TOKEN` | yes | must equal the backend's; sent only server-to-server |
+| `DEMO_API_SERVICE_TOKEN` | no | the backend's demo token; enables "View demo" (see Public demo) |
 
 ## Authentication design
 

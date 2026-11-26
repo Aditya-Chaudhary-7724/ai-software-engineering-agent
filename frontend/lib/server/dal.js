@@ -5,7 +5,9 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
 import { getAuthConfig } from './config';
-import { SESSION_COOKIE_NAME, csrfTokenFor, verifySessionToken } from './session';
+import { SESSION_COOKIE_NAME, csrfTokenFor, isDemoSession, verifySessionToken } from './session';
+
+export { isDemoSession };
 
 /**
  * Data Access Layer: the AUTHORITATIVE session check. `proxy.js` performs the
@@ -39,4 +41,11 @@ export async function requireSession() {
 export async function getCsrfToken() {
   const session = await requireSession();
   return csrfTokenFor(session, getAuthConfig().sessionSecret);
+}
+
+/** For operator-only pages (traces, the task list): a demo visitor goes home. */
+export async function requireOperatorSession() {
+  const session = await requireSession();
+  if (isDemoSession(session)) redirect('/');
+  return session;
 }

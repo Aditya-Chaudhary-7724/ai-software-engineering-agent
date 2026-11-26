@@ -9,7 +9,7 @@ import { parseLineRange } from '@/lib/ask';
 import { buildFileTree } from '@/lib/file-tree';
 import { formatCount, formatTimestamp } from '@/lib/format';
 import { api } from '@/lib/server/backend';
-import { getCsrfToken } from '@/lib/server/dal';
+import { getCsrfToken, getSession, isDemoSession } from '@/lib/server/dal';
 
 export const metadata = { title: 'Repository' };
 
@@ -49,6 +49,7 @@ export default async function RepositoryPage({ params, searchParams }) {
   const selected = typeof query.path === 'string' && query.path.length > 0 ? query.path : null;
   const highlight = selected ? parseLineRange(query.lines) : null;
 
+  const demo = isDemoSession(await getSession());
   const repository = await api.repository(id);
   if (!repository.ok && repository.error === 'repository_not_found') notFound();
   if (!repository.ok) {
@@ -65,7 +66,7 @@ export default async function RepositoryPage({ params, searchParams }) {
     api.graphSummary(id),
     selected && repo.available_on_disk ? api.fileContent(id, selected) : Promise.resolve(null),
     api.capabilities(),
-    api.jobs({ repositoryId: id, active: true, limit: 1 }),
+    demo ? Promise.resolve({ ok: false, error: 'demo_forbidden' }) : api.jobs({ repositoryId: id, active: true, limit: 1 }),
     getCsrfToken(),
   ]);
   const ingestionAvailable = capabilities.ok && capabilities.data.features.repository_ingestion;
@@ -117,7 +118,7 @@ export default async function RepositoryPage({ params, searchParams }) {
               <span className="text-accent">→</span>
             </Link>
           ) : null}
-          <Panel title="Index" bodyClassName="p-4">
+          {demo ? null : <Panel title="Index" bodyClassName="p-4">
             {ingestionAvailable ? (
               <ReindexControl
                 repositoryId={repo.id}
@@ -129,7 +130,7 @@ export default async function RepositoryPage({ params, searchParams }) {
             ) : (
               <p className="text-sm text-ink-muted">Re-indexing needs the backend&apos;s ingestion worker (WORKSPACE_ROOT configured).</p>
             )}
-          </Panel>
+          </Panel>}
           <Panel title="Knowledge graph" bodyClassName="p-4"><GraphSummary result={graph} /></Panel>
           <Panel title="Chunks by language" bodyClassName="p-4"><Breakdown counts={repo.chunks_by_language} /></Panel>
           <Panel title="Chunks by type" bodyClassName="p-4"><Breakdown counts={repo.chunks_by_type} /></Panel>

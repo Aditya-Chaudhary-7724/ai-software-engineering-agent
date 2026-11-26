@@ -78,3 +78,21 @@ export function getBackendConfig() {
 
   return { baseUrl, serviceToken };
 }
+
+/** Lifetime of a "View demo" session (no password, so kept short). */
+export const DEMO_SESSION_MAX_AGE_SECONDS = 2 * 60 * 60;
+
+/**
+ * Public demo mode. ON only when DEMO_API_SERVICE_TOKEN is a valid secret
+ * (>= 32 characters) that DIFFERS from API_SERVICE_TOKEN: if the two were
+ * equal, the backend could not tell them apart and a demo visitor would act
+ * as the operator (docs/security.md 13e). Any invalid value turns demo mode
+ * OFF, never on: `problem` names why, for the server log only.
+ */
+export function getDemoConfig() {
+  const demoToken = process.env.DEMO_API_SERVICE_TOKEN ?? '';
+  if (!demoToken) return { enabled: false, problem: null };
+  if (demoToken.length < MIN_SECRET_LENGTH) return { enabled: false, problem: 'demo_api_service_token_weak' };
+  if (demoToken === (process.env.API_SERVICE_TOKEN ?? '')) return { enabled: false, problem: 'demo_token_equals_operator_token' };
+  return { enabled: true, demoToken, problem: null };
+}

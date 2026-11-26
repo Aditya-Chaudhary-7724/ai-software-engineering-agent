@@ -1,9 +1,10 @@
 import CapabilityStrip from '@/components/capability-strip';
+import DemoBanner from '@/components/demo-banner';
 import LogoutButton from '@/components/logout-button';
 import WorkspaceNav from '@/components/workspace-nav';
 import { formatTimestamp } from '@/lib/format';
 import { api } from '@/lib/server/backend';
-import { getCsrfToken, requireSession } from '@/lib/server/dal';
+import { getCsrfToken, isDemoSession, requireSession } from '@/lib/server/dal';
 
 /**
  * Protected shell. `requireSession()` here is a second gate after proxy.js —
@@ -14,6 +15,7 @@ import { getCsrfToken, requireSession } from '@/lib/server/dal';
 export default async function WorkspaceLayout({ children }) {
   const session = await requireSession();
   const [csrfToken, capabilities] = await Promise.all([getCsrfToken(), api.capabilities()]);
+  const demo = isDemoSession(session);
 
   return (
     <div className="grid min-h-screen grid-cols-[15rem_minmax(0,1fr)]">
@@ -23,14 +25,17 @@ export default async function WorkspaceLayout({ children }) {
           <p className="mt-0.5 text-[0.9375rem] font-semibold tracking-[-0.01em]">Engineering Lab</p>
         </div>
         <div className="flex-1 overflow-y-auto py-4">
-          <WorkspaceNav />
+          <WorkspaceNav demo={demo} />
         </div>
         <div className="border-t border-rule py-3">
-          <p className="px-3 pb-2 font-mono text-[0.6875rem] text-ink-faint">session until {formatTimestamp(session.exp * 1000)}</p>
-          <LogoutButton csrfToken={csrfToken} />
+          <p className="px-3 pb-2 font-mono text-[0.6875rem] text-ink-faint">
+            {demo ? 'demo session' : 'session'} until {formatTimestamp(session.exp * 1000)}
+          </p>
+          <LogoutButton csrfToken={csrfToken} label={demo ? 'Leave demo' : undefined} />
         </div>
       </aside>
       <div className="min-w-0">
+        {demo ? <DemoBanner /> : null}
         <CapabilityStrip result={capabilities} />
         <main className="px-6 py-6 lg:px-10">{children}</main>
       </div>

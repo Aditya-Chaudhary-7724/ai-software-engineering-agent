@@ -10,6 +10,7 @@
  * re-verifies everything; this is the UI's half, never the only check.
  */
 
+import { demoLimitMessage } from './demo';
 import { SERVER_SIDE_MESSAGES } from './response-errors';
 
 export const POLL_INTERVAL_MS = 2000;
@@ -17,7 +18,8 @@ export const MAX_POLL_FAILURES = 6;
 export const MAX_INSTRUCTION_CHARS = 2000;
 
 const POLLING_STATUSES = new Set(['queued', 'running']);
-export const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'failed', 'expired', 'interrupted']);
+// `proposed`: a public-demo task's end state — the diff is shown, never applied.
+export const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'failed', 'expired', 'interrupted', 'proposed']);
 
 export function shouldPoll(task) {
   return POLLING_STATUSES.has(task?.status);
@@ -36,6 +38,7 @@ const STATUS = {
   failed: ['Failed', 'failed'],
   expired: ['Approval expired', 'warn'],
   interrupted: ['Interrupted', 'interrupted'],
+  proposed: ['Proposed (demo, display only)', 'completed'],
 };
 
 export function statusLabel(status) {
@@ -85,6 +88,12 @@ export function changeSummary(task) {
         : { tone: 'info', title: 'Rejected', text: 'You rejected the proposal. Nothing was written.' };
     case 'expired':
       return { tone: 'warn', title: 'Approval expired', text: `The proposal was not decided in time and can no longer be applied.${applied ? ` ${written} earlier in this task.` : ' Nothing was written by it.'}` };
+    case 'proposed':
+      return {
+        tone: 'info',
+        title: 'Proposal only — never applied',
+        text: 'This is a public-demo task: it stops at the proposed diff. Nobody can approve or apply it, and nothing was written.',
+      };
     case 'interrupted':
       return {
         tone: 'warn',
@@ -140,6 +149,7 @@ export function proposalStateLabel(state) {
       rejected: 'Rejected by you — not applied',
       expired: 'Expired — not applied',
       closed: 'Closed — not applied',
+      display_only: 'Demo proposal — display only, never applied',
     }[state] ?? state
   );
 }
@@ -263,6 +273,6 @@ const ERRORS = {
   frontend_backend_not_configured: 'The frontend’s backend connection is not configured.',
 };
 
-export function agentTaskErrorMessage(code) {
-  return ERRORS[code] ?? 'The request failed.';
+export function agentTaskErrorMessage(code, retryAfterSeconds = null) {
+  return demoLimitMessage(code, retryAfterSeconds) ?? ERRORS[code] ?? 'The request failed.';
 }

@@ -4,7 +4,12 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
  * Stateless, HMAC-SHA256-signed session tokens:  <payload b64url>.<mac b64url>
- * payload = { v: 1, sid, iat, exp }  (seconds since epoch)
+ * payload = { v: 1, sid, iat, exp, role }  (seconds since epoch)
+ *
+ * `role` is "operator" (password login) or "demo" (the public "View demo"
+ * button). It is inside the signed payload, so a visitor cannot change it;
+ * a token without it predates demo mode and was issued by the password
+ * login, so it reads as "operator". Any other value is rejected.
  *
  * Why stateless (no session table): there is exactly one operator, and the
  * Next.js server may run as several instances/serverless invocations that
@@ -24,6 +29,11 @@ const TOKEN_VERSION = 1;
 const CLOCK_SKEW_SECONDS = 60;
 const SID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const MAX_TOKEN_LENGTH = 512;
+export const ROLE_OPERATOR = 'operator';
+export const ROLE_DEMO = 'demo';
+const ROLES = new Set([ROLE_OPERATOR, ROLE_DEMO]);
+
+export const isDemoSession = (session) => session?.role === ROLE_DEMO;
 
 function deriveKey(secret, label) {
   return createHmac('sha256', secret).update(`asea:${label}:v1`).digest();
@@ -39,9 +49,10 @@ function safeEqual(a, b) {
 
 const nowSeconds = (nowMs) => Math.floor(nowMs / 1000);
 
-export function createSessionToken(secret, maxAgeSeconds, nowMs = Date.now()) {
+export function createSessionToken(secret, maxAgeSeconds, nowMs = Date.now(), role = ROLE_OPERATOR) {
+  if (!ROLES.has(role)) throw new TypeError('unknown session role');
   const iat = nowSeconds(nowMs);
-  const session = { v: TOKEN_VERSION, sid: randomBytes(16).toString('base64url'), iat, exp: iat + maxAgeSeconds };
+  const session = { v: TOKEN_VERSION, sid: randomBytes(16).toString('base64url'), iat, exp: iat + maxAgeSeconds, role };
   const payload = Buffer.from(JSON.stringify(session)).toString('base64url');
   const signature = mac(secret, 'session', payload).toString('base64url');
   return { token: `${payload}.${signature}`, session };
@@ -64,13 +75,15 @@ export function verifySessionToken(token, secret, nowMs = Date.now()) {
     return null;
   }
   const now = nowSeconds(nowMs);
+  const role = session?.role ?? ROLE_OPERATOR;
   const valid =
+    ROLES.has(role) &&
     session?.v === TOKEN_VERSION &&
     typeof session.sid === 'string' && SID_PATTERN.test(session.sid) &&
     Number.isInteger(session.iat) && Number.isInteger(session.exp) &&
     session.iat <= now + CLOCK_SKEW_SECONDS &&
     session.exp > now;
-  return valid ? { v: session.v, sid: session.sid, iat: session.iat, exp: session.exp } : null;
+  return valid ? { v: session.v, sid: session.sid, iat: session.iat, exp: session.exp, role } : null;
 }
 
 /**

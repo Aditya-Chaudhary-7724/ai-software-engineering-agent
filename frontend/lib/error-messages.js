@@ -23,6 +23,9 @@ const MESSAGES = {
   invalid_trace_id: ['Invalid trace id', 'Trace ids are UUIDs.'],
   trace_not_found: ['Trace not found', 'No recorded trace has this id.'],
   trace_unreadable: ['Trace unreadable', 'The trace file exists but could not be parsed.'],
+  schema_out_of_date: ['Database schema out of date', 'Run backend/scripts/apply_schema.py against the backend database.'],
+  demo_forbidden: ['Not available in the demo', 'The public demo is read-only. This needs the operator sign-in.'],
+  demo_not_available: ['Demo not available', 'The public demo is not enabled on this server.'],
 };
 
 export function describeError(code) {

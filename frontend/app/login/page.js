@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 
-import { ConfigError, getAuthConfig } from '@/lib/server/config';
+import ViewDemoButton from '@/components/view-demo-button';
+import { ConfigError, getAuthConfig, getDemoConfig } from '@/lib/server/config';
 import { getSession } from '@/lib/server/dal';
 import { safeNextPath } from '@/lib/safe-redirect';
 
@@ -22,6 +23,8 @@ export default async function LoginPage({ searchParams }) {
   if (await getSession()) redirect('/');
   const next = safeNextPath((await searchParams)?.next);
   const configured = authConfigured();
+  // Shown only when the server's demo token is valid (getDemoConfig fails closed).
+  const demoAvailable = configured && getDemoConfig().enabled;
 
   return (
     <main className="grid min-h-screen grid-cols-1 md:grid-cols-[1fr_minmax(0,28rem)]">
@@ -46,6 +49,15 @@ export default async function LoginPage({ searchParams }) {
 
       <section className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm">
+          {demoAvailable ? (
+            <div className="mb-8 border-b border-rule pb-8">
+              <h2 className="text-xl font-semibold tracking-[-0.01em]">Public demo</h2>
+              <p className="mb-4 mt-1 text-sm text-ink-muted">
+                Explore indexed open-source repositories, ask cited questions, and watch the agent propose a change.
+              </p>
+              <ViewDemoButton />
+            </div>
+          ) : null}
           <h1 className="text-xl font-semibold tracking-[-0.01em]">Operator sign-in</h1>
           <p className="mt-1 text-sm text-ink-muted">This workspace has a single operator account. There is no registration.</p>
           <div className="mt-6">

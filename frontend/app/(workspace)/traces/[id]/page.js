@@ -5,12 +5,14 @@ import SpanTree from '@/components/span-tree';
 import { ErrorNotice, KeyValue, PageHeader, Panel, StatusDot } from '@/components/ui';
 import { formatDuration, formatTimestamp } from '@/lib/format';
 import { api } from '@/lib/server/backend';
+import { requireOperatorSession } from '@/lib/server/dal';
 
 export const metadata = { title: 'Trace' };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export default async function TracePage({ params }) {
+  await requireOperatorSession();
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const result = await api.trace(id);

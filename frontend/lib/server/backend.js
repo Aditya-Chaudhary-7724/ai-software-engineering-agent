@@ -1,7 +1,11 @@
 import 'server-only';
 
-import { ConfigError, getBackendConfig } from './config';
+import { headers as requestHeaders } from 'next/headers';
+
+import { ConfigError, getAuthConfig, getBackendConfig, getDemoConfig } from './config';
 import { requireSession } from './dal';
+import { forwardedClientIp } from './request-guards';
+import { isDemoSession } from './session';
 
 /**
  * The ONLY place the frontend talks to the FastAPI backend. Server-to-server:
@@ -9,6 +13,12 @@ import { requireSession } from './dal';
  * server components that call these helpers directly, so there is no generic
  * browser-reachable proxy route that could be abused to reach arbitrary
  * backend paths.
+ *
+ * Which token is sent depends ONLY on the signed session role: the operator
+ * session sends API_SERVICE_TOKEN, a "View demo" session sends
+ * DEMO_API_SERVICE_TOKEN and the visitor's address (X-Demo-Client-IP, used
+ * by the backend's per-visitor limits). The backend decides what the demo
+ * token may do; nothing the browser sends can choose the token.
  *
  * Returns `{ ok: true, status, data }` or `{ ok: false, status, error }`, where
  * `error` is the backend's stable code (e.g. "repository_not_found") or one
@@ -30,8 +40,31 @@ function buildUrl(baseUrl, path, query) {
   return url;
 }
 
+/**
+ * Address sent for a demo visitor. Without a trusted proxy header every
+ * visitor shares ONE bucket (0.0.0.0): stricter, never looser.
+ */
+export const SHARED_DEMO_CLIENT_IP = '0.0.0.0';
+
+async function demoClientIp() {
+  let trustProxyHeaders = false;
+  try {
+    trustProxyHeaders = getAuthConfig().trustProxyHeaders;
+  } catch {
+    // Misconfigured auth means no session exists anyway; stay strict.
+  }
+  return forwardedClientIp(await requestHeaders(), trustProxyHeaders) ?? SHARED_DEMO_CLIENT_IP;
+}
+
+async function credentialsFor(session) {
+  if (!isDemoSession(session)) return { token: null, extraHeaders: {} };
+  const demo = getDemoConfig();
+  if (!demo.enabled) return { error: 'demo_not_available' };
+  return { token: demo.demoToken, extraHeaders: { 'X-Demo-Client-IP': await demoClientIp() } };
+}
+
 async function backendRequest(method, path, { query, body } = {}) {
-  await requireSession();
+  const session = await requireSession();
 
   let config;
   try {
@@ -40,14 +73,17 @@ async function backendRequest(method, path, { query, body } = {}) {
     if (error instanceof ConfigError) return { ok: false, status: 503, error: 'frontend_backend_not_configured' };
     throw error;
   }
+  const credentials = await credentialsFor(session);
+  if (credentials.error) return { ok: false, status: 503, error: credentials.error };
 
   let response;
   try {
     response = await fetch(buildUrl(config.baseUrl, path, query), {
       method,
       headers: {
-        Authorization: `Bearer ${config.serviceToken}`,
+        Authorization: `Bearer ${credentials.token ?? config.serviceToken}`,
         Accept: 'application/json',
+        ...credentials.extraHeaders,
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -70,6 +106,10 @@ async function backendRequest(method, path, { query, body } = {}) {
   const failure = { ok: false, status: response.status, error: code };
   // The only structured detail the backend ever adds to an error.
   if (Number.isInteger(payload?.repository_id)) failure.repositoryId = payload.repository_id;
+  // Demo limits (429): when the visitor may try again.
+  if (Number.isInteger(payload?.retry_after_seconds) && payload.retry_after_seconds > 0) {
+    failure.retryAfterSeconds = payload.retry_after_seconds;
+  }
   return failure;
 }
 
@@ -103,6 +143,8 @@ export const api = {
   graphNeighborhood: (id, { node, limit } = {}) =>
     backendGet(`/repositories/${encodeURIComponent(id)}/graph/neighborhood`, { node, limit }),
   graphSearch: (id, q, limit = 20) => backendGet(`/repositories/${encodeURIComponent(id)}/graph/search`, { q, limit }),
+  // Pre-generated demo examples: a database read on the backend (no LLM call, no quota).
+  demoExamples: (id) => backendGet(`/repositories/${encodeURIComponent(id)}/demo-examples`),
   // F6: agent tasks + bound human approval. Every call only enqueues or
   // reads; the agent itself runs in the backend's worker.
   agentRoutePreview: (instruction) => backendPost('/agent-tasks/route-preview', { instruction }),

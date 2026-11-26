@@ -10,7 +10,7 @@ const AVAILABLE = [
   { href: '/ask', label: 'Ask', icon: MessageSquareText },
   { href: '/graph', label: 'Knowledge graph', icon: Network },
   { href: '/tasks', label: 'Agent tasks', icon: GitPullRequestArrow },
-  { href: '/traces', label: 'Agent traces', icon: Route },
+  { href: '/traces', label: 'Agent traces', icon: Route, operatorOnly: true },
 ];
 
 // Shown so the workspace's scope is honest, but not linked: these screens
@@ -23,12 +23,12 @@ function isActive(pathname, href) {
   return href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export default function WorkspaceNav() {
+export default function WorkspaceNav({ demo = false }) {
   const pathname = usePathname();
   return (
     <nav aria-label="Workspace" className="space-y-6">
       <ul className="space-y-px">
-        {AVAILABLE.map(({ href, label, icon: Icon }) => {
+        {AVAILABLE.filter((item) => !(demo && item.operatorOnly)).map(({ href, label, icon: Icon }) => {
           const active = isActive(pathname, href);
           return (
             <li key={href}>

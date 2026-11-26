@@ -3,11 +3,13 @@ import 'server-only';
 import { NextResponse } from 'next/server';
 
 import { verifyPassword } from '../crypto/argon2id';
-import { ConfigError, getAuthConfig } from './config';
+import { ConfigError, DEMO_SESSION_MAX_AGE_SECONDS, getAuthConfig, getDemoConfig } from './config';
 import { getLoginRateLimiter } from './rate-limit';
 import { clientKeyFor, isSameOriginRequest, readBodyWithLimit } from './request-guards';
 import {
   CSRF_HEADER_NAME,
+  ROLE_DEMO,
+  ROLE_OPERATOR,
   SESSION_COOKIE_NAME,
   createSessionToken,
   sessionCookieOptions,
@@ -86,6 +88,29 @@ export async function handleLogin(request, { limiter = getLoginRateLimiter(), ve
   return response;
 }
 
+/**
+ * POST /api/auth/demo — the public "View demo" button. No password: it
+ * issues a short-lived session whose signed role is "demo". What that role
+ * may do is decided by the BACKEND (DEMO_API_SERVICE_TOKEN's deny-by-default
+ * scope, rate limits, token budget); this server only picks which token to
+ * send (backend.js) and hides operator controls. Same-origin only, so a
+ * cross-site page cannot swap an operator's session for a demo one.
+ */
+export async function handleDemoLogin(request, { logger = console } = {}) {
+  const config = loadConfig(logger);
+  if (!config) return fail(503, 'auth_not_configured');
+  if (!isSameOriginRequest(request, config.appOrigin)) return fail(403, 'forbidden_origin');
+  const demo = getDemoConfig();
+  if (!demo.enabled) {
+    if (demo.problem) logger.error(`[auth] demo mode disabled: ${demo.problem}`);
+    return fail(404, 'demo_not_available');
+  }
+  const { token, session } = createSessionToken(config.sessionSecret, DEMO_SESSION_MAX_AGE_SECONDS, Date.now(), ROLE_DEMO);
+  const response = NextResponse.json({ ok: true, expiresAt: session.exp }, { status: 200, headers: NO_STORE });
+  response.cookies.set(SESSION_COOKIE_NAME, token, sessionCookieOptions(DEMO_SESSION_MAX_AGE_SECONDS));
+  return response;
+}
+
 export async function handleLogout(request, { logger = console } = {}) {
   const config = loadConfig(logger);
   if (!config) return fail(503, 'auth_not_configured');
@@ -123,4 +148,17 @@ export function requireAuthenticatedMutation(request) {
     return { response: fail(403, 'csrf_token_invalid') };
   }
   return { session };
+}
+
+/**
+ * `requireAuthenticatedMutation` plus: the session must be the OPERATOR's.
+ * For actions the demo may never take (ingestion, re-index, approval
+ * decisions). The backend refuses them for the demo token too
+ * (403 demo_forbidden); this answers the same without calling it.
+ */
+export function requireOperatorMutation(request) {
+  const guard = requireAuthenticatedMutation(request);
+  if (guard.response) return guard;
+  if (guard.session.role !== ROLE_OPERATOR) return { response: fail(403, 'demo_forbidden') };
+  return guard;
 }

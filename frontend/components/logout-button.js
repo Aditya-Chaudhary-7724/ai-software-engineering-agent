@@ -8,7 +8,7 @@ import { useState } from 'react';
  * Logout is a state-changing POST, so it carries the session-bound CSRF
  * token (rendered into this page by the server) in the x-csrf-token header.
  */
-export default function LogoutButton({ csrfToken }) {
+export default function LogoutButton({ csrfToken, label = 'Sign out' }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
 
@@ -34,7 +34,7 @@ export default function LogoutButton({ csrfToken }) {
       className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-muted transition-colors hover:bg-sunken hover:text-ink disabled:opacity-50"
     >
       <LogOut aria-hidden size={15} strokeWidth={1.75} />
-      {pending ? 'Signing out…' : 'Sign out'}
+      {pending ? 'Signing out…' : label}
     </button>
   );
 }

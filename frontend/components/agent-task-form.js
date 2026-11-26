@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { MAX_INSTRUCTION_CHARS, ROUTE_TEXT, agentTaskErrorMessage } from '@/lib/agent-tasks';
+import { retryAfterFrom } from '@/lib/demo';
 import { errorCodeFromResponse } from '@/lib/response-errors';
 
 import { Tag } from './ui';
@@ -24,6 +25,7 @@ export default function AgentTaskForm({ repositories, csrfToken, initialReposito
   const [preview, setPreview] = useState(null); // { text, route, supported, requires_approval }
   const [pending, setPending] = useState(null); // 'preview' | 'submit'
   const [error, setError] = useState(null);
+  const [retryAfter, setRetryAfter] = useState(null);
 
   const trimmed = instruction.trim();
   const validLength = trimmed.length > 0 && trimmed.length <= MAX_INSTRUCTION_CHARS;
@@ -47,7 +49,10 @@ export default function AgentTaskForm({ repositories, csrfToken, initialReposito
     try {
       const { response, body } = await post('/api/agent-tasks/route-preview', { instruction: trimmed });
       if (response.ok && typeof body.route === 'string') setPreview({ ...body, text: trimmed });
-      else setError(errorCodeFromResponse(response.status, body));
+      else {
+        setError(errorCodeFromResponse(response.status, body));
+        setRetryAfter(retryAfterFrom(body));
+      }
     } catch {
       setError('backend_unreachable');
     }
@@ -66,6 +71,7 @@ export default function AgentTaskForm({ repositories, csrfToken, initialReposito
         return;
       }
       setError(errorCodeFromResponse(response.status, body));
+      setRetryAfter(retryAfterFrom(body));
     } catch {
       setError('backend_unreachable');
     }
@@ -136,7 +142,7 @@ export default function AgentTaskForm({ repositories, csrfToken, initialReposito
 
       {error ? (
         <p role="alert" className="border-l-2 border-err px-3 py-1.5 text-sm text-err">
-          {agentTaskErrorMessage(error)} <span className="font-mono text-xs text-ink-faint">({error})</span>
+          {agentTaskErrorMessage(error, retryAfter)} <span className="font-mono text-xs text-ink-faint">({error})</span>
         </p>
       ) : null}
     </form>
