@@ -1,0 +1,50 @@
+# Caddy: the ONLY service with published ports (docker-compose.prod.yml).
+# Automatic HTTPS (Let's Encrypt) for {$SITE_ADDRESS}, the DuckDNS hostname;
+# port 80 serves the ACME challenge and redirects everything else to HTTPS.
+{
+	# No admin API: config changes restart the container instead.
+	admin off
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Bounded request bodies (the app's own limits are smaller still).
+	request_body {
+		max_size 1MB
+	}
+
+	# FastAPI's interactive docs are disabled in production (APP_ENV) and the
+	# backend is not routed here anyway; answer a plain 404 instead of the
+	# frontend's login redirect, so it is obvious from outside.
+	@apidocs path /docs /docs/* /redoc /redoc/* /openapi.json
+	handle @apidocs {
+		respond 404
+	}
+
+	# The backend's health endpoints, and nothing else of the backend, for
+	# external uptime checks. They never include secrets or exception text.
+	@health {
+		method GET HEAD
+		path /health/live /health/ready
+	}
+	handle @health {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000 {
+			# The visitor's address, set (not appended) by this proxy. The
+			# frontend trusts only the right-most X-Forwarded-For entry
+			# (TRUST_PROXY_HEADERS=true) for its demo rate-limit identity.
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
+	header -Server
+
+	log {
+		output stdout
+		format json
+	}
+}

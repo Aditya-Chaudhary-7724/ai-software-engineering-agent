@@ -1,0 +1,191 @@
+# Production stack for ONE small VM (Oracle Cloud A1, linux/arm64).
+#
+#   internet ──443/80──▶ caddy ──▶ frontend (Next.js BFF) ──▶ backend (FastAPI)
+#                          │                                    ├──▶ postgres (+pgvector)
+#                          └── /health/live, /health/ready ─────┘    └──▶ neo4j
+#
+# Only caddy publishes ports. The backend, PostgreSQL and Neo4j have no
+# published port, so nothing on the internet can reach them directly. Caddy
+# reaches the backend for the two health paths only (Caddyfile).
+#
+# Networks:
+#   edge  caddy <-> frontend
+#   app   caddy/frontend <-> backend; NOT internal: the backend needs egress
+#         (Groq API, GitHub clones)
+#   data  backend <-> postgres/neo4j; internal: no egress at all
+#
+# Run only through deploy/deploy.sh, which sets IMAGE_TAG (a git SHA) and
+# passes --env-file prod.env. Every variable a container receives is listed
+# explicitly below (interpolated from prod.env), so each container gets only
+# the secrets it needs: the frontend never sees the Groq key or database
+# password, the database never sees the session secret. `:?` marks
+# required values: compose refuses to start without them.
+
+name: ai-swe-agent
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    <<: *hardening
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS (the DuckDNS hostname) in prod.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge, app]
+    depends_on: [frontend]
+    mem_limit: 256m
+    logging: *logging
+
+  frontend:
+    image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY in prod.env}/ai-swe-agent-frontend:${IMAGE_TAG:?IMAGE_TAG is set by deploy.sh}
+    restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=1000,gid=1000
+    environment:
+      APP_ORIGIN: https://${SITE_ADDRESS}
+      BACKEND_URL: http://backend:8000
+      TRUST_PROXY_HEADERS: "true"
+      OPERATOR_PASSWORD_HASH: ${OPERATOR_PASSWORD_HASH:?}
+      SESSION_SECRET: ${SESSION_SECRET:?}
+      API_SERVICE_TOKEN: ${API_SERVICE_TOKEN:?}
+      DEMO_API_SERVICE_TOKEN: ${DEMO_API_SERVICE_TOKEN:-}
+    networks: [edge, app]
+    depends_on: [backend]
+    mem_limit: 512m
+    logging: *logging
+
+  backend:
+    image: ${IMAGE_REGISTRY:?}/ai-swe-agent-backend:${IMAGE_TAG:?}
+    restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://ai_swe_agent:${POSTGRES_PASSWORD:?}@postgres:5432/ai_swe_agent
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?}
+      API_SERVICE_TOKEN: ${API_SERVICE_TOKEN:?}
+      LLM_PROVIDER: groq
+      GROQ_API_KEY: ${GROQ_API_KEY:?}
+      LLM_MODEL: ${LLM_MODEL:?}
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}
+      LLM_MAX_COMPLETION_TOKENS: ${LLM_MAX_COMPLETION_TOKENS:-}
+      EMBEDDING_PROVIDER: fastembed
+      EMBEDDING_THREADS: ${EMBEDDING_THREADS:-2}
+      WORKSPACE_ROOT: /app/workspaces
+      # Hosted deployments never run the Docker sandbox, and this container
+      # never gets the Docker socket (docs/deployment.md section 7).
+      SANDBOX_ENABLED: "false"
+      WEB_CONCURRENCY: "1"
+      DEMO_API_SERVICE_TOKEN: ${DEMO_API_SERVICE_TOKEN:-}
+      DEMO_REPOSITORY_IDS: ${DEMO_REPOSITORY_IDS:-}
+      DEMO_LLM_MODEL: ${DEMO_LLM_MODEL:-}
+      DEMO_LLM_REASONING_EFFORT: ${DEMO_LLM_REASONING_EFFORT:-}
+      DEMO_ASK_PER_IP_PER_HOUR: ${DEMO_ASK_PER_IP_PER_HOUR:-}
+      DEMO_ASK_GLOBAL_PER_MINUTE: ${DEMO_ASK_GLOBAL_PER_MINUTE:-}
+      DEMO_DAILY_TOKEN_BUDGET: ${DEMO_DAILY_TOKEN_BUDGET:-}
+      DEMO_ASK_TOKEN_RESERVE: ${DEMO_ASK_TOKEN_RESERVE:-}
+      DEMO_TASKS_PER_DAY: ${DEMO_TASKS_PER_DAY:-}
+      DEMO_TASKS_PER_IP_PER_DAY: ${DEMO_TASKS_PER_IP_PER_DAY:-}
+      DEMO_TASK_TOKEN_RESERVE: ${DEMO_TASK_TOKEN_RESERVE:-}
+      DEMO_TASK_MAX_TOKENS: ${DEMO_TASK_MAX_TOKENS:-}
+    volumes:
+      - workspaces:/app/workspaces
+      - traces:/app/.observability/traces
+    networks: [app, data]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_started
+    mem_limit: 3g
+    logging: *logging
+
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg18
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: ai_swe_agent
+      POSTGRES_DB: ai_swe_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      # PostgreSQL 18 images keep data under /var/lib/postgresql/<major>/,
+      # so the volume is mounted at the parent.
+      - pgdata:/var/lib/postgresql
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_swe_agent -d ai_swe_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1g
+    logging: *logging
+
+  neo4j:
+    image: neo4j:5.26.30-community
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?}
+      # Bounded memory on a small VM (heap + page cache < mem_limit).
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j_data:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 1536m
+    logging: *logging
+
+networks:
+  edge: {}
+  app: {}
+  data:
+    internal: true
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
+  pgdata: {}
+  neo4j_data: {}
+  workspaces: {}
+  traces: {}

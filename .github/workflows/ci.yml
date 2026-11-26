@@ -99,7 +99,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           # F8: pinned to the versions verified locally (reproducible CI).
-          pip install pytest==8.4.2 mypy==1.19.1 types-requests==2.32.4.20260107 httpx==0.28.1 pip-audit==2.9.0
+          pip install pytest==8.4.2 mypy==1.19.1 types-requests==2.32.4.20260107 httpx==0.28.1 pip-audit==2.9.0 pyyaml==6.0.3
 
       - name: Initialise the CI databases (separate app database, pgvector enabled)
         # The service container creates only ai_swe_agent_test, and a fresh

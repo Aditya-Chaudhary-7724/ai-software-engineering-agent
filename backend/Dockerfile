@@ -67,7 +67,12 @@ COPY backend/ ./backend/
 # Non-root user: this container holds real production credentials via
 # environment variables (never baked into the image — see below) and
 # must not run as root.
+# /app/workspaces (WORKSPACE_ROOT in production, the clone directory) and
+# /app/.observability/traces (observability/recorder.py's default) exist in
+# the image so fresh named volumes mounted there inherit appuser's
+# ownership (deploy/docker-compose.prod.yml).
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/workspaces /app/.observability/traces \
     && chown -R appuser:appuser /app
 USER appuser
 
