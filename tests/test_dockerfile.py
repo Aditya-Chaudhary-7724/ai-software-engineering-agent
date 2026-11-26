@@ -79,3 +79,24 @@ def test_an_explicit_workers_flag_would_override_web_concurrency():
     # Documents WHY the flag must stay out of the CMD: this was the bug.
     cmd_with_flag = _dockerfile_cmd() + ["--workers", "2"]
     assert _resolved_workers(cmd_with_flag, "1") == 2
+
+
+def _dockerfile_arg(name: str) -> str:
+    match = re.search(rf"^ARG {name}=(\S+)\s*$", DOCKERFILE.read_text(), re.MULTILINE)
+    assert match, f"backend/Dockerfile must declare ARG {name} with a default"
+    return match.group(1)
+
+
+def test_the_baked_embedding_model_is_exactly_the_pinned_default():
+    """The image bakes the model the app will load (no runtime download), so
+    its repo and revision must be the ones backend/config.py pins."""
+    import config
+
+    pinned = config.FASTEMBED_MODELS[config.DEFAULT_FASTEMBED_MODEL]
+    assert _dockerfile_arg("EMBEDDING_HF_REPO") == pinned.hf_repo
+    assert _dockerfile_arg("EMBEDDING_HF_REVISION") == pinned.hf_revision
+    text = DOCKERFILE.read_text()
+    assert "ENV EMBEDDING_MODEL_PATH=/" in text
+    assert "ENV HF_HUB_OFFLINE=1" in text
+    # Downloaded before the source COPY, so code changes keep the cached layer.
+    assert text.index("snapshot_download") < text.index("COPY backend/ ./backend/")

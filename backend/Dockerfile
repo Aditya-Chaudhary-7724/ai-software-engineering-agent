@@ -47,6 +47,21 @@ RUN apt-get update \
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Local embedding model, baked in ($0, no download at runtime). Exactly the
+# pinned Hugging Face revision of backend/config.py FASTEMBED_MODELS (the
+# default model); tests/test_dockerfile.py fails if these ARGs drift from
+# it. Its own layer BEFORE the source COPY, so a code change does not
+# re-download it. Read-only for appuser (owned by root). HF_HUB_OFFLINE
+# makes any accidental runtime download fail instead of fetching.
+ARG EMBEDDING_HF_REPO=Qdrant/bge-small-en-v1.5-onnx-Q
+ARG EMBEDDING_HF_REVISION=aa8f8b060edb00e03bfdd08813a2949946c8ba55
+ENV EMBEDDING_MODEL_PATH=/opt/models/bge-small-en-v1.5
+RUN python -c "import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3])" \
+        "$EMBEDDING_HF_REPO" "$EMBEDDING_HF_REVISION" "$EMBEDDING_MODEL_PATH" \
+    && rm -rf "$EMBEDDING_MODEL_PATH/.cache" \
+    && test -f "$EMBEDDING_MODEL_PATH/model_optimized.onnx" -o -f "$EMBEDDING_MODEL_PATH/model.onnx"
+ENV HF_HUB_OFFLINE=1
+
 COPY backend/ ./backend/
 
 # Non-root user: this container holds real production credentials via

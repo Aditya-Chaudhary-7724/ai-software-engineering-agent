@@ -172,6 +172,17 @@ jobs:
           docker run --rm ai-swe-agent-backend:ci git --version
           test -z "$(docker run --rm ai-swe-agent-backend:ci find /app -iname '*.env*')"
 
+      - name: Verify the baked embedding model works offline (no network, read-only)
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp -e EMBEDDING_PROVIDER=fastembed \
+            ai-swe-agent-backend:ci python -c "
+          from vectorstore.embeddings.factory import configured_embedding_provider
+          provider, name = configured_embedding_provider()
+          vectors = provider.embed(['def add(a, b): return a + b'])
+          assert len(vectors[0]) == 384, len(vectors[0])
+          print(name, 'ok')
+          "
+
       - name: Audit the Python packages that actually ship (pip-audit, OSV)
         # The image's own `pip freeze` — exactly what production runs —
         # audited without resolving or installing anything. Every accepted
