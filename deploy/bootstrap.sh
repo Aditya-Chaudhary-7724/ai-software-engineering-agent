@@ -6,7 +6,9 @@
 #   sudo ./bootstrap.sh [<git-sha>]
 #
 # Run from the directory holding the deploy/ files and prod.env (chmod 600),
-# e.g. /opt/ai-swe-agent. With a git SHA it also deploys that tag.
+# e.g. /opt/ai-swe-agent. With a git SHA it also deploys that tag, which
+# needs those images cached here or a GHCR login; normally the first deploy
+# is a manual run of the CD workflow instead (it logs the VM in to GHCR).
 #
 #  1. SSH: keys only (no passwords, no root login) — only if the login user
 #     already has an authorized key, so it can never lock you out.

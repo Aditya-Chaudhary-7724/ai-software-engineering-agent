@@ -50,7 +50,17 @@ deploy() {
 
   if [[ "$SKIP_PULL" != "1" ]]; then
     log "pulling images for $tag"
-    compose_tag "$tag" pull --quiet frontend backend caddy postgres neo4j
+    if ! compose_tag "$tag" pull --quiet frontend backend caddy postgres neo4j; then
+      # GHCR images are private; outside a CD run there is no registry login.
+      # A tag deployed before is still cached here (rollback).
+      local registry service
+      registry="$(env_get IMAGE_REGISTRY)"
+      for service in backend frontend; do
+        docker image inspect "$registry/ai-swe-agent-$service:$tag" >/dev/null 2>&1 \
+          || die "cannot pull $registry/ai-swe-agent-$service:$tag and it is not cached here (deploy through the CD workflow)"
+      done
+      log "pull failed; using the cached images for $tag"
+    fi
   fi
 
   log "starting databases"
