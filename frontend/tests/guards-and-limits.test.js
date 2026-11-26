@@ -58,9 +58,14 @@ describe('clientKeyFor', () => {
     expect(clientKeyFor(request, true)).toBe('203.0.113.9');
   });
 
-  it('uses only the first hop and rejects garbage', () => {
-    expect(clientKeyFor(req({ 'x-forwarded-for': '198.51.100.1, 10.0.0.1' }), true)).toBe('198.51.100.1');
+  it('uses only the entry the trusted proxy appended (right-most) and rejects garbage', () => {
+    // A client sends "X-Forwarded-For: 198.51.100.1"; an appending proxy adds
+    // the real address. The client-chosen left entry must never be the key.
+    expect(clientKeyFor(req({ 'x-forwarded-for': '198.51.100.1, 203.0.113.7' }), true)).toBe('203.0.113.7');
     expect(clientKeyFor(req({ 'x-forwarded-for': '<script>' }), true)).toBe(UNTRUSTED_CLIENT_KEY);
+    // IP-shaped but not an address.
+    expect(clientKeyFor(req({ 'x-forwarded-for': '999.1.1.1' }), true)).toBe(UNTRUSTED_CLIENT_KEY);
+    expect(clientKeyFor(req({ 'x-forwarded-for': '2001:db8::1' }), true)).toBe('2001:db8::1');
   });
 });
 

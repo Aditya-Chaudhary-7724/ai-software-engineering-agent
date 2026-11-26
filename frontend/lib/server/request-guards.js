@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { isIP } from 'node:net';
+
 /**
  * Request-level guards for state-changing Route Handlers.
  *
@@ -43,11 +45,24 @@ export const UNTRUSTED_CLIENT_KEY = 'untrusted-client';
  * reverse proxy overwrites it, so it is only used when TRUST_PROXY_HEADERS is
  * set. Otherwise every request shares one bucket — strict, but correct for a
  * single-operator tool (a forged header can't buy extra attempts).
+ * Fixed 2026-11-26: it used the LEFT-most entry, which a client can choose
+ * whenever the proxy appends to X-Forwarded-For.
  */
 export function clientKeyFor(request, trustProxyHeaders) {
-  if (!trustProxyHeaders) return UNTRUSTED_CLIENT_KEY;
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwarded && CLIENT_KEY_PATTERN.test(forwarded) ? forwarded : UNTRUSTED_CLIENT_KEY;
+  return forwardedClientIp(request.headers, trustProxyHeaders) ?? UNTRUSTED_CLIENT_KEY;
+}
+
+/**
+ * The client address our reverse proxy reported, or null. Uses the
+ * RIGHT-MOST X-Forwarded-For entry: that is the one the trusted proxy
+ * itself added. Entries to its left come from the client (a proxy that
+ * appends instead of replacing keeps them), so they are never trusted.
+ * Must be a literal IP address (node:net isIP), not just IP-shaped.
+ */
+export function forwardedClientIp(headers, trustProxyHeaders) {
+  if (!trustProxyHeaders) return null;
+  const forwarded = headers.get('x-forwarded-for')?.split(',').at(-1)?.trim();
+  return forwarded && CLIENT_KEY_PATTERN.test(forwarded) && isIP(forwarded) !== 0 ? forwarded : null;
 }
 
 /** Reads at most `maxBytes` of the body; returns `null` if it is larger. */
