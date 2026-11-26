@@ -231,3 +231,10 @@ jobs:
 
       - name: Dependency audit
         run: npm audit
+
+      - name: Build the production frontend image and check it runs as non-root
+        working-directory: .
+        run: |
+          docker build -t ai-swe-agent-frontend:ci -f frontend/Dockerfile .
+          docker run --rm --entrypoint whoami ai-swe-agent-frontend:ci | grep -qx node
+          test -z "$(docker run --rm --entrypoint sh ai-swe-agent-frontend:ci -c 'find /app -maxdepth 2 -name ".env*"')"
